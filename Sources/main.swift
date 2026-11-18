@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var videoRecorder: VideoRecorder?
     private var isStoppingRecording = false
     private var quitAfterRecording = false
+    private var recordHintWindow: NSWindow?
     private var controller: OverlayController?
     private var pinnedWindows: [PinnedImageController] = []
     private var scrollCapture: ScrollCaptureController?
@@ -241,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false) {
-        let c = OverlayController(screen: screen, image: image)
+        let c = OverlayController(screen: screen, image: image, recordsSelectionOnRelease: forRecording)
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
         c.onRecordSelection = { [weak self, weak c] region in
@@ -328,9 +329,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, self.videoRecorder === recorder else { return }
                 self.setRecordingIndicator("录制中")
                 self.updateRecordingMenu()
+                self.showRecordHint(screen: screen, region: clipped)
             }
             recorder.onFinish = { [weak self, weak recorder] result in
                 guard let self else { return }
+                self.hideRecordHint()
                 if self.videoRecorder === recorder { self.videoRecorder = nil }
                 self.isStoppingRecording = false
                 self.stopRecordingItem?.isHidden = true
@@ -373,6 +376,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         videoRecorder?.stop()
         setRecordingIndicator("正在结束录屏")
         updateRecordingMenu()
+    }
+
+    private func showRecordHint(screen: NSScreen, region: NSRect) {
+        hideRecordHint()
+        let hint = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
+                            backing: .buffered, defer: false)
+        hint.isOpaque = false
+        hint.backgroundColor = .clear
+        hint.hasShadow = false
+        hint.level = .screenSaver
+        hint.ignoresMouseEvents = true
+        hint.acceptsMouseMovedEvents = false
+        hint.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        hint.contentView = RecordingRegionHintView(frame: NSRect(origin: .zero, size: screen.frame.size),
+                                                   region: region)
+        recordHintWindow = hint
+        hint.orderFrontRegardless()
+    }
+
+    private func hideRecordHint() {
+        recordHintWindow?.orderOut(nil)
+        recordHintWindow = nil
     }
 
     private func setRecordingIndicator(_ title: String?) {

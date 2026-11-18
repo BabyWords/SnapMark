@@ -228,6 +228,10 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
+    /// 为“选择区域录制”准备的模式：框选完成后立即触发 onRecordSelection，
+    /// 不显示标注工具栏，也不进入标注流程。
+    var recordsSelectionOnRelease = false
+
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
         self.baseImage = baseImage
         self.imageScale = imageScale
@@ -687,6 +691,12 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             dragOrigin = nil
             phase = .idle
             if let r = selection, r.width >= 4, r.height >= 4 {
+                if recordsSelectionOnRelease {
+                    savedSelection = nil
+                    savedAnnotations = []
+                    onRecordSelection?(r)
+                    return
+                }
                 if let old = savedSelection, abs(old.width - r.width) < 1.5, abs(old.height - r.height) < 1.5,
                    abs(old.minX - r.minX) < 1.5, abs(old.minY - r.minY) < 1.5 {
                     annotations = savedAnnotations
@@ -798,11 +808,6 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 guard let self else { return }
                 self.commitText()
                 self.pinAndFinish()
-            }
-            tb.onRecordSelection = { [weak self] in
-                guard let self, let selection = self.selection else { return }
-                self.commitText()
-                self.onRecordSelection?(selection)
             }
             tb.onScrollCapture = { [weak self] vertical in
                 guard let self, let selection = self.selection else { return }
@@ -1201,6 +1206,45 @@ extension OverlayView {
 // MARK: - 控制器
 
 /// 长截图期间只显示选区轮廓的鼠标穿透窗口，不遮挡或截获目标应用输入。
+/// 录制期间显示录制范围的鼠标穿透提示层：红色边框 + 区域外轻微压暗。
+final class RecordingRegionHintView: NSView {
+    var region: NSRect
+
+    init(frame: NSRect, region: NSRect) {
+        self.region = region
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let clipped = region.intersection(bounds)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return }
+
+        // 区域外轻微压暗，让录制边界一目了然。
+        let shade = NSBezierPath(rect: bounds)
+        shade.appendRect(clipped)
+        shade.windingRule = .evenOdd
+        NSColor.black.withAlphaComponent(0.18).setFill()
+        shade.fill()
+
+        // 红色描边 + 白色内描边，在亮/暗页面上都清晰且明确表示“正在录制”。
+        let border = NSBezierPath(rect: clipped.insetBy(dx: 1, dy: 1))
+        border.lineWidth = 3
+        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+        border.stroke()
+        let inner = NSBezierPath(rect: clipped.insetBy(dx: 1.5, dy: 1.5))
+        inner.lineWidth = 1
+        NSColor.white.withAlphaComponent(0.95).setStroke()
+        inner.stroke()
+    }
+}
+
 private final class ScrollSelectionHintView: NSView {
     var selection: NSRect
 
@@ -1244,6 +1288,7 @@ final class OverlayController {
     private let screen: NSScreen
     private let image: CGImage
     private let previousApplication: NSRunningApplication?
+    private let recordsSelectionOnRelease: Bool
     private var window: OverlayWindow?
     private var view: OverlayView?
     private var scrollHintWindow: NSWindow?
@@ -1252,9 +1297,10 @@ final class OverlayController {
     var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
-    init(screen: NSScreen, image: CGImage) {
+    init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false) {
         self.screen = screen
         self.image = image
+        self.recordsSelectionOnRelease = recordsSelectionOnRelease
         let current = NSRunningApplication.current.bundleIdentifier
         let front = NSWorkspace.shared.frontmostApplication
         self.previousApplication = front?.bundleIdentifier == current ? nil : front
@@ -1283,6 +1329,7 @@ final class OverlayController {
         v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
         v.onRecordSelection = { [weak self] region in self?.onRecordSelection?(region) }
         v.onScrollCapture = { [weak self] region, vertical in self?.onScrollCapture?(region, vertical) }
+        v.recordsSelectionOnRelease = recordsSelectionOnRelease
         w.contentView = v
 
         window = w

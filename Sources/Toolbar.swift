@@ -33,7 +33,6 @@ final class ToolbarView: NSView {
     var onCopy: (() -> Void)?
     var onSave: ((NSView) -> Void)?
     var onPin: (() -> Void)?
-    var onRecordSelection: (() -> Void)?
     var onScrollCapture: ((Bool) -> Void)?
     var onClose: (() -> Void)?
 
@@ -92,7 +91,6 @@ final class ToolbarView: NSView {
         items.append(separator())
 
         items.append(makeButton(symbols: ["pin", "pin.fill"], tooltip: "置顶：把截图悬浮在最顶层", action: #selector(pinTapped)))
-        items.append(makeButton(symbols: ["record.circle"], tooltip: "录制当前选区（无音频，保存为 MP4）", action: #selector(recordSelectionTapped)))
         items.append(makeButton(symbols: ["arrow.up.and.down"], tooltip: "纵向截长图：自动识别上滚或下滚", action: #selector(verticalScrollTapped)))
         items.append(makeButton(symbols: ["arrow.left.and.right"], tooltip: "横向截长图：自动识别左移或右移", action: #selector(horizontalScrollTapped)))
         items.append(makeButton(symbols: ["doc.on.doc"], tooltip: "复制到剪贴板 (↩)", action: #selector(copyTapped)))
@@ -228,7 +226,6 @@ final class ToolbarView: NSView {
     @objc private func copyTapped() { onCopy?() }
     @objc private func saveTapped() { onSave?(self) }
     @objc private func pinTapped() { onPin?() }
-    @objc private func recordSelectionTapped() { onRecordSelection?() }
     @objc private func verticalScrollTapped() { onScrollCapture?(true) }
     @objc private func horizontalScrollTapped() { onScrollCapture?(false) }
     @objc private func closeTapped() { onClose?() }

@@ -221,8 +221,14 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
         guard outputType == .screen else { return }
-        guard let status = CMGetAttachment(sampleBuffer, key: SCStreamFrameInfo.status.rawValue as CFString, attachmentModeOut: nil) as? Int,
-              status == SCFrameStatus.complete.rawValue,
+        // 帧状态（.complete 表示有可用画面）存放在 sample attachments 数组里，
+        // 而不是 buffer 级 attachment。用 CMGetAttachment 读不到，会把所有帧都当成
+        // 无效丢弃，导致停止时 frameCount == 0、报“没有收到完整画面”。
+        guard let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let attachments = attachmentsArray.first,
+              let statusRawValue = attachments[SCStreamFrameInfo.status] as? Int,
+              let status = SCFrameStatus(rawValue: statusRawValue),
+              status == .complete,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         guard !isStopRequested else { return }
         appendFrame(pixelBuffer, presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
