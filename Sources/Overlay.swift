@@ -1226,19 +1226,23 @@ final class RecordingRegionHintView: NSView {
         let clipped = region.intersection(bounds)
         guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return }
 
-        // 区域外轻微压暗，让录制边界一目了然。
+        // 区域外轻微压暗，让录制边界一目了然。压暗只落在选区之外，
+        // 而录屏采集的 sourceRect 正好等于选区，因此不会进入成片。
         let shade = NSBezierPath(rect: bounds)
         shade.appendRect(clipped)
         shade.windingRule = .evenOdd
         NSColor.black.withAlphaComponent(0.18).setFill()
         shade.fill()
 
-        // 红色描边 + 白色内描边，在亮/暗页面上都清晰且明确表示“正在录制”。
-        let border = NSBezierPath(rect: clipped.insetBy(dx: 1, dy: 1))
+        // 红框与内白边必须完全落在选区外侧，否则会被录进成片。
+        // 描边以路径为中心向两侧各扩展 lineWidth/2，因此用负 inset 把路径
+        // 向外推出，使描边最内侧离选区边界至少 1pt，抗锯齿也不会渗入采集范围。
+        let border = NSBezierPath(rect: clipped.insetBy(dx: -3.0, dy: -3.0))
         border.lineWidth = 3
-        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+        NSColor.systemRed.withAlphaComponent(0.95).setStroke()
         border.stroke()
-        let inner = NSBezierPath(rect: clipped.insetBy(dx: 1.5, dy: 1.5))
+
+        let inner = NSBezierPath(rect: clipped.insetBy(dx: -1.5, dy: -1.5))
         inner.lineWidth = 1
         NSColor.white.withAlphaComponent(0.95).setStroke()
         inner.stroke()
