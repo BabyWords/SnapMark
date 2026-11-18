@@ -328,12 +328,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 output = directory.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("mp4")
                 suffix += 1
             }
-            let recorder = VideoRecorder(screen: screen, region: clipped, outputURL: output)
+            // 先显示录制范围提示层（红框 + 压暗），并拿到它的窗口号，
+            // 让录屏采集时通过 SCContentFilter 排除该窗口，红框只显示在屏幕上、不会进成片。
+            showRecordHint(screen: screen, region: clipped)
+            let excludingWindowID: CGWindowID? = {
+                guard let number = recordHintWindow?.windowNumber, number > 0 else { return nil }
+                return CGWindowID(number)
+            }()
+            let recorder = VideoRecorder(screen: screen, region: clipped, outputURL: output,
+                                         excludingWindowID: excludingWindowID)
             recorder.onStarted = { [weak self, weak recorder] in
                 guard let self, self.videoRecorder === recorder else { return }
                 self.setRecordingIndicator("录制中")
                 self.updateRecordingMenu()
-                self.showRecordHint(screen: screen, region: clipped)
             }
             recorder.onFinish = { [weak self, weak recorder] result in
                 guard let self else { return }

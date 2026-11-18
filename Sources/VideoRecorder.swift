@@ -33,6 +33,7 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private let sourceRect: CGRect
     private let outputWidth: Int
     private let outputHeight: Int
+    private let excludingWindowID: CGWindowID?
     private let outputQueue = DispatchQueue(label: "snapmark.video-recorder.frames")
     private let lock = NSLock()
 
@@ -58,8 +59,9 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var ownsOutputFile = false
     private var tailFrame: (CVPixelBuffer, CMTime)?
 
-    init(screen: NSScreen, region: NSRect, outputURL: URL) {
+    init(screen: NSScreen, region: NSRect, outputURL: URL, excludingWindowID: CGWindowID? = nil) {
         self.outputURL = outputURL
+        self.excludingWindowID = excludingWindowID
         let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         displayID = number.map { CGDirectDisplayID($0.uint32Value) } ?? 0
         let geometry = number == nil ? nil : Self.captureGeometry(
@@ -162,7 +164,7 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 throw RecorderError.displayUnavailable
             }
 
-            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows(from: content))
             let configuration = SCStreamConfiguration()
             configuration.sourceRect = sourceRect
             configuration.width = outputWidth
@@ -204,6 +206,15 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
                 outputQueue.async { [weak self] in self?.finishWithoutCapture(error: error) }
             }
         }
+    }
+
+    /// 从 SCShareableContent 里找到要排除的提示窗（录制范围红框），返回排除列表。
+    private func excludedWindows(from content: SCShareableContent) -> [SCWindow] {
+        guard let excludingWindowID,
+              let hintWindow = content.windows.first(where: { $0.windowID == excludingWindowID }) else {
+            return []
+        }
+        return [hintWindow]
     }
 
     private func stopCapture(_ stream: SCStream) {
