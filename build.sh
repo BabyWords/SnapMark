@@ -25,8 +25,15 @@ if [ -f "Resources/AppIcon.icns" ]; then
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-# Ad-hoc signing avoids requiring any developer-specific certificate or secret.
-codesign --force --sign - "$APP"
+# 优先使用本地稳定的自签名证书签名。ad-hoc 签名会让 macOS 按代码哈希识别应用，
+# 每次代码更新都会重新要求屏幕录制授权；用固定证书签名后，身份稳定，只需授权一次。
+# 没有证书时回退到 ad-hoc（仍可运行，但更新后可能需要重新授权）。
+SIGN_IDENTITY="SnapMark Signing"
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "\"$SIGN_IDENTITY\""; then
+  codesign --force --sign "$SIGN_IDENTITY" "$APP"
+else
+  codesign --force --sign - "$APP"
+fi
 
 printf '==> Built %s\n' "$APP"
 printf 'Open it with: open "%s"\n' "$APP"
