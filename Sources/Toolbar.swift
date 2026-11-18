@@ -91,7 +91,7 @@ final class ToolbarView: NSView {
 
         items.append(makeButton(symbols: ["pin", "pin.fill"], tooltip: "置顶：把截图悬浮在最顶层", action: #selector(pinTapped)))
         items.append(makeButton(symbols: ["doc.on.doc"], tooltip: "复制到剪贴板 (↩)", action: #selector(copyTapped)))
-        items.append(makeButton(symbols: ["square.and.arrow.down"], tooltip: "保存到桌面 (⌘S)", action: #selector(saveTapped)))
+        items.append(makeButton(symbols: ["square.and.arrow.down"], tooltip: "保存 (⌘S)", action: #selector(saveTapped)))
         items.append(makeButton(symbols: ["xmark"], tooltip: "取消 (Esc)", action: #selector(closeTapped)))
 
         for v in items { addSubview(v) }

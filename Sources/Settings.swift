@@ -1,5 +1,28 @@
 import AppKit
 
+/// 截图保存目录的持久化，默认「下载」文件夹。
+enum SaveLocationStore {
+    private static let key = "SnapMark.saveDirectory"
+
+    static var directory: URL {
+        if let path = UserDefaults.standard.string(forKey: key),
+           !path.isEmpty,
+           FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    static func set(_ url: URL) {
+        UserDefaults.standard.set(url.path, forKey: key)
+    }
+
+    static func resetToDefault() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 /// 快捷键录制框
 final class HotKeyField: NSView {
 
@@ -83,36 +106,39 @@ final class SettingsWindowController {
 
     private var window: NSWindow?
     private var field: HotKeyField?
+    private var pathLabel: NSTextField?
 
     func show() {
         if window == nil { build() }
         field?.combo = HotKeyStore.load()
         field?.isRecording = false
+        refreshPathLabel()
         NSApp.activate(ignoringOtherApps: true)
         window?.center()
         window?.makeKeyAndOrderFront(nil)
     }
 
     private func build() {
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 252),
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
                          styleMask: [.titled, .closable],
                          backing: .buffered, defer: false)
         w.title = "SnapMark 设置"
         w.isReleasedWhenClosed = false
         w.tabbingMode = .disallowed
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 252))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 400))
 
+        // 快捷键分组
         let title = NSTextField(labelWithString: "截图快捷键")
         title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        title.frame = NSRect(x: 24, y: 210, width: 300, height: 18)
+        title.frame = NSRect(x: 24, y: 358, width: 300, height: 18)
 
         let sub = NSTextField(labelWithString: "点击方框后按下新的组合键，需包含 ⌘ / ⌥ / ⌃ 之一")
         sub.font = NSFont.systemFont(ofSize: 11.5)
         sub.textColor = .secondaryLabelColor
-        sub.frame = NSRect(x: 24, y: 188, width: 372, height: 16)
+        sub.frame = NSRect(x: 24, y: 336, width: 372, height: 16)
 
-        let field = HotKeyField(frame: NSRect(x: 24, y: 112, width: 372, height: 56))
+        let field = HotKeyField(frame: NSRect(x: 24, y: 262, width: 372, height: 56))
         field.onChange = { [weak self] combo in
             guard let self else { return }
             let ok = self.applyHandler?(combo) ?? false
@@ -130,8 +156,28 @@ final class SettingsWindowController {
         let hint = NSTextField(labelWithString: "录制时按 Esc 取消，修改立即生效")
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .tertiaryLabelColor
-        hint.frame = NSRect(x: 24, y: 88, width: 372, height: 15)
+        hint.frame = NSRect(x: 24, y: 238, width: 372, height: 15)
 
+        // 保存位置分组
+        let saveTitle = NSTextField(labelWithString: "保存位置")
+        saveTitle.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        saveTitle.frame = NSRect(x: 24, y: 206, width: 300, height: 18)
+
+        let pathLabel = NSTextField(labelWithString: "")
+        pathLabel.font = NSFont.systemFont(ofSize: 11.5)
+        pathLabel.textColor = .secondaryLabelColor
+        pathLabel.lineBreakMode = .byTruncatingMiddle
+        pathLabel.frame = NSRect(x: 24, y: 172, width: 372, height: 22)
+
+        let select = NSButton(title: "选择文件夹…", target: self, action: #selector(selectFolderTapped))
+        select.bezelStyle = .rounded
+        select.frame = NSRect(x: 24, y: 128, width: 130, height: 32)
+
+        let resetSave = NSButton(title: "使用下载文件夹", target: self, action: #selector(resetSaveTapped))
+        resetSave.bezelStyle = .rounded
+        resetSave.frame = NSRect(x: 166, y: 128, width: 150, height: 32)
+
+        // 底部按钮
         let reset = NSButton(title: "恢复默认", target: self, action: #selector(resetTapped))
         reset.bezelStyle = .rounded
         reset.frame = NSRect(x: 24, y: 26, width: 96, height: 32)
@@ -141,11 +187,39 @@ final class SettingsWindowController {
         done.keyEquivalent = "\r"
         done.frame = NSRect(x: 320, y: 26, width: 76, height: 32)
 
-        for v in [title, sub, field, hint, reset, done] as [NSView] { content.addSubview(v) }
+        for v in [title, sub, field, hint, saveTitle, pathLabel, select, resetSave, reset, done] as [NSView] {
+            content.addSubview(v)
+        }
         w.contentView = content
 
         self.window = w
         self.field = field
+        self.pathLabel = pathLabel
+    }
+
+    private func refreshPathLabel() {
+        pathLabel?.stringValue = "当前保存到：\(SaveLocationStore.directory.path)"
+        pathLabel?.toolTip = SaveLocationStore.directory.path
+    }
+
+    @objc private func selectFolderTapped() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "选择"
+        panel.message = "选择截图保存位置"
+        panel.directoryURL = SaveLocationStore.directory
+        if panel.runModal() == .OK, let url = panel.url {
+            SaveLocationStore.set(url)
+            refreshPathLabel()
+        }
+    }
+
+    @objc private func resetSaveTapped() {
+        SaveLocationStore.resetToDefault()
+        refreshPathLabel()
     }
 
     @objc private func resetTapped() {

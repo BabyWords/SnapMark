@@ -767,7 +767,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             tb.onSave = { [weak self] _ in
                 guard let self else { return }
                 self.commitText()
-                self.saveToDesktop()
+                self.saveImage()
             }
             tb.onPin = { [weak self] in
                 guard let self else { return }
@@ -1018,7 +1018,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             switch ch {
             case "c": copyAndFinish(); return true
             case "z": undo(); return true
-            case "s": saveToDesktop(); return true
+            case "s": saveImage(); return true
             case "w": finish(); return true
             default: break
             }
@@ -1091,15 +1091,12 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         finish()
     }
 
-    private func saveToDesktop() {
+    private func saveImage() {
         guard let img = compositeImage() else {
             showOutputError("没有可保存的截图内容。")
             return
         }
-        guard let dir = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            showOutputError("找不到桌面目录，截图未保存。")
-            return
-        }
+        let dir = SaveLocationStore.directory
 
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"

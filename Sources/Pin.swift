@@ -51,10 +51,7 @@ final class PinnedImageController {
     }
 
     private func saveToDesktop() {
-        guard let dir = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            showError("找不到桌面目录，图片未保存。")
-            return
-        }
+        let dir = SaveLocationStore.directory
 
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyyMMdd-HHmmss-SSS"
@@ -115,7 +112,7 @@ final class PinView: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        let save = NSMenuItem(title: "保存到桌面", action: #selector(saveTapped), keyEquivalent: "")
+        let save = NSMenuItem(title: "保存", action: #selector(saveTapped), keyEquivalent: "")
         let destroy = NSMenuItem(title: "销毁", action: #selector(destroyTapped), keyEquivalent: "")
         save.target = self
         destroy.target = self
