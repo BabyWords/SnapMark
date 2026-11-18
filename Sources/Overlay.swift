@@ -224,6 +224,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     private var textEditBase: Snapshot?
 
     var onFinish: (() -> Void)?
+    var onPinImage: ((CGImage) -> Void)?
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
         self.baseImage = baseImage
@@ -768,6 +769,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 self.commitText()
                 self.saveToDesktop()
             }
+            tb.onPin = { [weak self] in
+                guard let self else { return }
+                self.commitText()
+                self.pinAndFinish()
+            }
             tb.onClose = { [weak self] in self?.finish() }
             addSubview(tb)
             toolbar = tb
@@ -1041,6 +1047,15 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         return Compositor.render(base: baseImage, selection: sel, imageScale: imageScale, annotations: annotations)
     }
 
+    private func pinAndFinish() {
+        guard let img = compositeImage() else {
+            showOutputError("没有可置顶的截图内容。")
+            return
+        }
+        onPinImage?(img)
+        finish()
+    }
+
     private var dpi: CGFloat { 72 * imageScale }
 
     private var exportProperties: [CFString: Any] {
@@ -1161,6 +1176,7 @@ final class OverlayController {
     private var window: OverlayWindow?
     private var view: OverlayView?
     var onClose: (() -> Void)?
+    var onPinImage: ((CGImage) -> Void)?
 
     init(screen: NSScreen, image: CGImage) {
         self.screen = screen
@@ -1190,6 +1206,7 @@ final class OverlayController {
         let v = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size),
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
+        v.onPinImage = { [weak self] image in self?.onPinImage?(image) }
         w.contentView = v
 
         window = w
