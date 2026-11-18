@@ -224,7 +224,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     private var textEditBase: Snapshot?
 
     var onFinish: (() -> Void)?
-    var onPinImage: ((CGImage) -> Void)?
+    var onPinImage: ((CGImage, NSSize) -> Void)?
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
         self.baseImage = baseImage
@@ -1048,11 +1048,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     private func pinAndFinish() {
-        guard let img = compositeImage() else {
+        guard let img = compositeImage(), let sel = selection else {
             showOutputError("没有可置顶的截图内容。")
             return
         }
-        onPinImage?(img)
+        onPinImage?(img, sel.size)
         finish()
     }
 
@@ -1176,7 +1176,7 @@ final class OverlayController {
     private var window: OverlayWindow?
     private var view: OverlayView?
     var onClose: (() -> Void)?
-    var onPinImage: ((CGImage) -> Void)?
+    var onPinImage: ((CGImage, NSSize) -> Void)?
 
     init(screen: NSScreen, image: CGImage) {
         self.screen = screen
@@ -1206,7 +1206,7 @@ final class OverlayController {
         let v = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size),
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
-        v.onPinImage = { [weak self] image in self?.onPinImage?(image) }
+        v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
         w.contentView = v
 
         window = w

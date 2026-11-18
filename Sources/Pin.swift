@@ -10,10 +10,9 @@ final class PinnedImageController {
 
     var onClose: (() -> Void)?
 
-    init(image: CGImage) {
+    init(image: CGImage, pointSize: NSSize) {
         self.image = image
-        let raw = NSSize(width: CGFloat(image.width), height: CGFloat(image.height))
-        let size = PinnedImageController.fittedSize(for: raw)
+        let size = PinnedImageController.fittedSize(for: pointSize)
 
         let w = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                          styleMask: [.borderless],

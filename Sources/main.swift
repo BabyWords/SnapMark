@@ -189,13 +189,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func present(screen: NSScreen, image: CGImage) {
         let c = OverlayController(screen: screen, image: image)
         c.onClose = { [weak self] in self?.controller = nil }
-        c.onPinImage = { [weak self] image in self?.pinImage(image) }
+        c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
         controller = c
         c.begin()
     }
 
-    private func pinImage(_ image: CGImage) {
-        let pin = PinnedImageController(image: image)
+    private func pinImage(_ image: CGImage, size: NSSize) {
+        let pin = PinnedImageController(image: image, pointSize: size)
         pin.onClose = { [weak self] in
             self?.pinnedWindows.removeAll { $0 === pin }
         }
