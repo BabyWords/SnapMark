@@ -33,6 +33,7 @@ final class ToolbarView: NSView {
     var onCopy: (() -> Void)?
     var onSave: ((NSView) -> Void)?
     var onPin: (() -> Void)?
+    var onScrollCapture: ((Bool) -> Void)?
     var onClose: (() -> Void)?
 
     private let buttonSize: CGFloat = 28
@@ -90,6 +91,8 @@ final class ToolbarView: NSView {
         items.append(separator())
 
         items.append(makeButton(symbols: ["pin", "pin.fill"], tooltip: "置顶：把截图悬浮在最顶层", action: #selector(pinTapped)))
+        items.append(makeButton(symbols: ["arrow.down.to.line.compact"], tooltip: "纵向截长图", action: #selector(verticalScrollTapped)))
+        items.append(makeButton(symbols: ["arrow.right.to.line.compact"], tooltip: "横向截长图", action: #selector(horizontalScrollTapped)))
         items.append(makeButton(symbols: ["doc.on.doc"], tooltip: "复制到剪贴板 (↩)", action: #selector(copyTapped)))
         items.append(makeButton(symbols: ["square.and.arrow.down"], tooltip: "保存 (⌘S)", action: #selector(saveTapped)))
         items.append(makeButton(symbols: ["xmark"], tooltip: "取消 (Esc)", action: #selector(closeTapped)))
@@ -223,5 +226,7 @@ final class ToolbarView: NSView {
     @objc private func copyTapped() { onCopy?() }
     @objc private func saveTapped() { onSave?(self) }
     @objc private func pinTapped() { onPin?() }
+    @objc private func verticalScrollTapped() { onScrollCapture?(true) }
+    @objc private func horizontalScrollTapped() { onScrollCapture?(false) }
     @objc private func closeTapped() { onClose?() }
 }

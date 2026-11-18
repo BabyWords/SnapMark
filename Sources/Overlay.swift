@@ -225,6 +225,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     var onFinish: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
+    var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
         self.baseImage = baseImage
@@ -797,6 +798,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 self.commitText()
                 self.pinAndFinish()
             }
+            tb.onScrollCapture = { [weak self] vertical in
+                guard let self, let selection = self.selection else { return }
+                self.commitText()
+                self.onScrollCapture?(selection, vertical)
+            }
             tb.onClose = { [weak self] in self?.finish() }
             addSubview(tb)
             toolbar = tb
@@ -1197,6 +1203,7 @@ final class OverlayController {
     private var view: OverlayView?
     var onClose: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
+    var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     init(screen: NSScreen, image: CGImage) {
         self.screen = screen
@@ -1227,6 +1234,7 @@ final class OverlayController {
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
         v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
+        v.onScrollCapture = { [weak self] region, vertical in self?.onScrollCapture?(region, vertical) }
         w.contentView = v
 
         window = w
@@ -1258,6 +1266,20 @@ final class OverlayController {
     /// 仅开发自检用：自动打开色板
     func openPaletteForTest() {
         view?.togglePaletteForTest()
+    }
+
+    func hideForScrollCapture() {
+        window?.orderOut(nil)
+        if let previousApplication {
+            previousApplication.activate(options: [.activateAllWindows])
+        }
+    }
+
+    func showAfterScrollCapture() {
+        guard let window, let view else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(view)
     }
 
     func close() {

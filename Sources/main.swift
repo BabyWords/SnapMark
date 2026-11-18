@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menu: NSMenu?
     private var captureItem: NSMenuItem?
     private var permissionItem: NSMenuItem?
+    private var stopScrollItem: NSMenuItem?
     private var controller: OverlayController?
     private var pinnedWindows: [PinnedImageController] = []
+    private var scrollCapture: ScrollCaptureController?
     private var capturing = false
     private var captureRequestID: UUID?
     private var permissionTimer: Timer?
@@ -62,6 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         m.addItem(capture)
         captureItem = capture
 
+        let stopScroll = NSMenuItem(title: "停止长截图", action: #selector(menuStopScrollCapture), keyEquivalent: "")
+        stopScroll.target = self
+        stopScroll.isHidden = true
+        m.addItem(stopScroll)
+        stopScrollItem = stopScroll
+
         let settings = NSMenuItem(title: "设置快捷键…", action: #selector(menuSettings), keyEquivalent: "")
         settings.target = self
         m.addItem(settings)
@@ -103,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuCapture() { startCapture() }
+    @objc private func menuStopScrollCapture() { stopScrollCapture() }
     @objc private func menuSettings() { SettingsWindowController.shared.show() }
     @objc private func menuPermission() {
         _ = ScreenCapture.requestPermission()
@@ -114,7 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 快捷键
 
     private func setupHotKey() {
-        HotKeyManager.shared.install { [weak self] in self?.startCapture() }
+        HotKeyManager.shared.install { [weak self] in
+            guard let self else { return }
+            if self.scrollCapture != nil { self.stopScrollCapture() }
+            else { self.startCapture() }
+        }
 
         let saved = HotKeyManager.shared.combo
         if !HotKeyManager.shared.register(saved) {
@@ -190,8 +203,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let c = OverlayController(screen: screen, image: image)
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
+        c.onScrollCapture = { [weak self, weak c] region, vertical in
+            guard let self, let c else { return }
+            self.startScrollCapture(screen: screen, region: region, vertical: vertical, overlay: c)
+        }
         controller = c
         c.begin()
+    }
+
+    private func startScrollCapture(screen: NSScreen, region: NSRect, vertical: Bool, overlay: OverlayController) {
+        guard scrollCapture == nil else { return }
+        let capture = ScrollCaptureController(screen: screen, region: region,
+                                              axis: vertical ? .vertical : .horizontal)
+        capture.onStatus = { [weak self] message in
+            self?.statusItem?.button?.toolTip = message
+        }
+        capture.onFinish = { [weak self, weak overlay] image in
+            guard let self else { return }
+            self.scrollCapture = nil
+            self.stopScrollItem?.isHidden = true
+            self.statusItem?.button?.toolTip = "SnapMark 截图"
+            guard let image else {
+                overlay?.showAfterScrollCapture()
+                self.showAlert("长截图失败", "没有采集到足够画面。请确保区域可滚动并重新尝试。")
+                return
+            }
+            overlay?.close()
+            let pointSize = NSSize(width: CGFloat(image.width) / screen.backingScaleFactor,
+                                   height: CGFloat(image.height) / screen.backingScaleFactor)
+            self.pinImage(image, size: pointSize)
+        }
+        scrollCapture = capture
+        stopScrollItem?.isHidden = false
+        overlay.hideForScrollCapture()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { capture.start() }
+    }
+
+    private func stopScrollCapture() {
+        scrollCapture?.stop()
     }
 
     private func pinImage(_ image: CGImage, size: NSSize) {
