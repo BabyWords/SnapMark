@@ -66,7 +66,7 @@ final class CanvasView: PassthroughView {
         drawResizeHandles(sel, in: ctx)
         if textSelectionMode {
             drawTextSelection(in: ctx)
-            drawPill(recognizing ? "正在识别文字…" : "拖选文字 · ⌘C 复制 · 点击其他工具返回", at: NSPoint(x: sel.minX, y: badgeY - 22))
+            drawPill(recognizing ? "正在识别文字…" : "拖选文字 · 双击全选 · ⌘C 复制 · 点其他工具返回", at: NSPoint(x: sel.minX, y: badgeY - 22))
         }
     }
 
@@ -419,6 +419,25 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         return selected.0
     }
 
+    /// 双击：选中识别到的全部文字
+    private func selectAllText() {
+        let order = orderedLineIndices()
+        var parts: [String] = []
+        var rects: [NSRect] = []
+        for lineIndex in order {
+            let line = recognizedLines[lineIndex]
+            guard !line.characters.isEmpty else { continue }
+            parts.append(line.characters.map(\.text).joined())
+            let lineRects = line.characters.map(\.rect)
+            if let union = lineRects.dropFirst().reduce(lineRects.first, { $0?.union($1) }) {
+                rects.append(union)
+            }
+        }
+        selectedText = parts.joined(separator: "\n")
+        textSelectionRects = rects
+        textSelectionRect = rects.dropFirst().reduce(rects.first) { $0?.union($1) }
+    }
+
     private var mousePoint: NSPoint? {
         guard let w = window else { return nil }
         let p = convert(w.mouseLocationOutsideOfEventStream, from: nil)
@@ -557,7 +576,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         let p = convert(event.locationInWindow, from: nil)
 
         if event.clickCount == 2, let sel = selection, sel.contains(p) {
-            copyAndFinish()
+            if textSelectionMode {
+                if !recognizing { selectAllText() }
+            } else {
+                copyAndFinish()
+            }
             return
         }
 
