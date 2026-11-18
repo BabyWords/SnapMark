@@ -1205,8 +1205,8 @@ extension OverlayView {
 
 // MARK: - 控制器
 
-/// 长截图期间只显示选区轮廓的鼠标穿透窗口，不遮挡或截获目标应用输入。
-/// 录制期间显示录制范围的鼠标穿透提示层：红色边框 + 区域外轻微压暗。
+/// 录制期间显示录制范围的鼠标穿透提示层：仅区域外压暗，不在选区内部画任何边框，
+/// 以免边框被录进成片（采集的 sourceRect 正好等于选区）。
 final class RecordingRegionHintView: NSView {
     var region: NSRect
 
@@ -1226,22 +1226,14 @@ final class RecordingRegionHintView: NSView {
         let clipped = region.intersection(bounds)
         guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return }
 
-        // 区域外轻微压暗，让录制边界一目了然。
+        // 区域外轻微压暗，让录制边界一目了然。压暗只落在选区之外，而采集的
+        // sourceRect 正好等于选区，因此这段遮罩不会进入成片。
+        // 不在选区内部画边框，否则边框会被录进成片。
         let shade = NSBezierPath(rect: bounds)
         shade.appendRect(clipped)
         shade.windingRule = .evenOdd
-        NSColor.black.withAlphaComponent(0.18).setFill()
+        NSColor.black.withAlphaComponent(0.28).setFill()
         shade.fill()
-
-        // 红色描边 + 白色内描边，在亮/暗页面上都清晰且明确表示“正在录制”。
-        let border = NSBezierPath(rect: clipped.insetBy(dx: 1, dy: 1))
-        border.lineWidth = 3
-        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
-        border.stroke()
-        let inner = NSBezierPath(rect: clipped.insetBy(dx: 1.5, dy: 1.5))
-        inner.lineWidth = 1
-        NSColor.white.withAlphaComponent(0.95).setStroke()
-        inner.stroke()
     }
 }
 

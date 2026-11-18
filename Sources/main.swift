@@ -77,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildMenu() {
         let m = NSMenu()
+        // 关闭自动启用/禁用，让 updateRecordingMenu 里手动设置的 isEnabled/isHidden 生效。
+        // 默认 autoenablesItems=true 会在菜单显示前把所有 target 可响应的 item 重新启用，
+        // 导致录制时“录制当前屏幕/选择区域录制”无法置灰。
+        m.autoenablesItems = false
 
         let capture = NSMenuItem(title: "截图", action: #selector(menuCapture), keyEquivalent: "")
         capture.target = self
