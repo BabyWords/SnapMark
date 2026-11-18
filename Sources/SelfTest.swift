@@ -159,6 +159,148 @@ enum DemoAssets {
 }
 
 enum SelfTest {
+    private static func verifyScrollMatching() -> Bool {
+        guard let source = makeScrollTestImage(width: 96, height: 320) else {
+            print("SELFTEST-FAIL: scroll test image")
+            return false
+        }
+        let cases: [(ScrollCaptureController.Axis, ScrollCaptureController.MatchDirection, String)] = [
+            (.vertical, .towardEnd, "down"),
+            (.vertical, .towardStart, "up"),
+            (.horizontal, .towardEnd, "right"),
+            (.horizontal, .towardStart, "left")
+        ]
+
+        for (axis, expectedDirection, name) in cases {
+            let previousRect: CGRect
+            let nextRect: CGRect
+            switch (axis, expectedDirection) {
+            case (.vertical, .towardEnd):
+                previousRect = CGRect(x: 0, y: 0, width: 96, height: 200)
+                nextRect = CGRect(x: 0, y: 80, width: 96, height: 200)
+            case (.vertical, .towardStart):
+                previousRect = CGRect(x: 0, y: 80, width: 96, height: 200)
+                nextRect = CGRect(x: 0, y: 0, width: 96, height: 200)
+            case (.horizontal, .towardEnd):
+                previousRect = CGRect(x: 0, y: 0, width: 64, height: 96)
+                nextRect = CGRect(x: 32, y: 0, width: 64, height: 96)
+            case (.horizontal, .towardStart):
+                previousRect = CGRect(x: 32, y: 0, width: 64, height: 96)
+                nextRect = CGRect(x: 0, y: 0, width: 64, height: 96)
+            }
+            guard let previous = source.cropping(to: previousRect),
+                  let next = source.cropping(to: nextRect),
+                  let match = ScrollCaptureController.bestOverlap(previous: previous, next: next, axis: axis),
+                  match.direction == expectedDirection,
+                  abs(match.overlap - (axis == .vertical ? 120 : 32)) <= 4 else {
+                print("SELFTEST-FAIL: scroll match \(name)")
+                return false
+            }
+        }
+
+        // Turn around and overlap the prior canvas: both placements must stay in bounds,
+        // while the overall stitched extent only grows by newly revealed pixels.
+        let first = ScrollCaptureController.layout(canvasOrigin: 0, canvasLength: 200,
+                                                   newFrameOffset: 80, frameLength: 200)
+        let reversed = ScrollCaptureController.layout(canvasOrigin: first.origin, canvasLength: first.length,
+                                                      newFrameOffset: 0, frameLength: 200)
+        guard first.origin == 0, first.length == 280,
+              reversed.origin == 0, reversed.length == 280,
+              reversed.previousDrawOffset == 0, reversed.nextDrawOffset == 0 else {
+            print("SELFTEST-FAIL: scroll direction reversal layout")
+            return false
+        }
+        return true
+    }
+
+    private static func verifyTextScrollMatching() -> Bool {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: 480, height: 1800,
+                                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 480, height: 1800))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+        for line in 0..<60 {
+            let text = "第\(line)行：截图正文 matching \((line * 7919) % 10007)"
+            (text as NSString).draw(at: NSPoint(x: 30, y: line * 29 + 5), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 15), .foregroundColor: NSColor.black
+            ])
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        guard let source = ctx.makeImage() else { return false }
+        for shift in [0, 3, 7, 24, 57, 211, -7, -24, -211] {
+            let start = 300
+            guard let a = source.cropping(to: CGRect(x: 0, y: start, width: 480, height: 900)),
+                  let b = source.cropping(to: CGRect(x: 0, y: start + shift, width: 480, height: 900)) else { return false }
+            guard let match = ScrollCaptureController.bestOverlap(previous: a, next: b, axis: .vertical),
+                  match.overlap == 900 - abs(shift),
+                  shift == 0 || match.direction == (shift > 0 ? .towardEnd : .towardStart) else {
+                let actual = ScrollCaptureController.bestOverlap(previous: a, next: b, axis: .vertical)
+                print("SELFTEST-FAIL: white text scroll shift \(shift), got \(actual.map { "\($0.overlap)/\($0.direction == .towardEnd ? "end" : "start")" } ?? "nil")")
+                return false
+            }
+        }
+        // Identical rows produce several equally valid offsets: do not invent a large scroll.
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: 480, height: 1800))
+        ctx.setFillColor(NSColor.black.cgColor)
+        for y in stride(from: 0, to: 1800, by: 30) {
+            ctx.fill(CGRect(x: 30, y: y, width: 330, height: 9))
+        }
+        guard let periodic = ctx.makeImage(),
+              let a = periodic.cropping(to: CGRect(x: 0, y: 0, width: 480, height: 900)),
+              let b = periodic.cropping(to: CGRect(x: 0, y: 7, width: 480, height: 900)),
+              ScrollCaptureController.bestOverlap(previous: a, next: b, axis: .vertical) == nil else {
+            print("SELFTEST-FAIL: ambiguous repeated rows accepted")
+            return false
+        }
+        print("SELFTEST: text scroll 9/9; periodic ambiguity rejected")
+        return true
+    }
+
+    private static func verifyVideoGeometry() -> Bool {
+        guard let geometry = VideoRecorder.captureGeometry(
+            region: NSRect(x: 12.25, y: 20.5, width: 101.25, height: 50.25),
+            screenSize: NSSize(width: 200, height: 120), scale: 2
+        ) else {
+            print("SELFTEST-FAIL: video capture geometry nil")
+            return false
+        }
+        guard geometry.sourceRect == CGRect(x: 12.25, y: 49.25, width: 101.25, height: 50.25),
+           geometry.width.isMultiple(of: 2), geometry.height.isMultiple(of: 2),
+           geometry.width == 204, geometry.height == 102 else {
+            print("SELFTEST-FAIL: video capture geometry")
+            return false
+        }
+        guard let clipped = VideoRecorder.captureGeometry(
+            region: NSRect(x: -10, y: 100, width: 30, height: 40),
+            screenSize: NSSize(width: 200, height: 120), scale: 2
+        ), clipped.sourceRect == CGRect(x: 0, y: 0, width: 20, height: 20),
+           clipped.width == 40, clipped.height == 40 else {
+            print("SELFTEST-FAIL: video geometry clipping")
+            return false
+        }
+        return true
+    }
+
+    private static func makeScrollTestImage(width: Int, height: Int) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height,
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        for y in 0..<height {
+            for x in 0..<width {
+                // Deterministic texture with distinct values in both axes avoids ambiguous matches.
+                let value = CGFloat((x * 37 + y * 73 + (x * y) % 251) % 256) / 255
+                context.setFillColor(NSColor(calibratedWhite: value, alpha: 1).cgColor)
+                context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+            }
+        }
+        return context.makeImage()
+    }
+
     static func run() {
         let pixelSize = NSSize(width: 1600, height: 1000)
         let scale: CGFloat = 2
@@ -183,6 +325,11 @@ enum SelfTest {
         }
         CGImageDestinationAddImage(dest, out, nil)
         let ok = CGImageDestinationFinalize(dest)
-        print(ok ? "SELFTEST-OK \(path) \(out.width)x\(out.height)" : "SELFTEST-FAIL: write")
+        guard ok else {
+            print("SELFTEST-FAIL: write")
+            return
+        }
+        guard verifyScrollMatching(), verifyTextScrollMatching(), verifyVideoGeometry() else { return }
+        print("SELFTEST-OK \(path) \(out.width)x\(out.height); scroll directions: 4/4; video geometry: 2/2")
     }
 }

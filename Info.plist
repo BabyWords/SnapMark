@@ -29,7 +29,7 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>SnapMark 需要读取屏幕画面，才能截取你想标注的区域。</string>
+	<string>SnapMark 需要读取屏幕画面，以截取和录制你选择的屏幕内容。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

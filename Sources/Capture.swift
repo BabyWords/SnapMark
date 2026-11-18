@@ -45,7 +45,8 @@ enum ScreenCapture {
     /// 抓取整块屏幕，回调在主线程。
     /// 不再调 `screencapture` 子进程兜底：子进程继承的是本 App 的授权，
     /// 没权限时会再弹一次系统授权框，造成"已经给过权限还反复弹窗"。
-    static func capture(screen: NSScreen, completion: @escaping (CaptureOutcome) -> Void) {
+    static func capture(screen: NSScreen, excludingWindowID: CGWindowID? = nil,
+                        completion: @escaping (CaptureOutcome) -> Void) {
         // NSScreen 属于 AppKit 主线程对象：先在调用线程提取值类型，
         // 异步任务只携带 displayID/尺寸，避免后台读取 NSScreen 触发竞态。
         guard let id = displayID(of: screen) else { completion(.failed); return }
@@ -58,10 +59,20 @@ enum ScreenCapture {
                 do {
                     let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
                     guard let display = content.displays.first(where: { $0.displayID == id }) else {
-                        await finish(legacyCapture(displayID: id), completion)
+                        await finish(excludingWindowID == nil ? legacyCapture(displayID: id) : .failed, completion)
                         return
                     }
-                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    let excludedWindows: [SCWindow]
+                    if let excludingWindowID {
+                        guard let hintWindow = content.windows.first(where: { $0.windowID == excludingWindowID }) else {
+                            await finish(.failed, completion)
+                            return
+                        }
+                        excludedWindows = [hintWindow]
+                    } else {
+                        excludedWindows = []
+                    }
+                    let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
                     let cfg = SCStreamConfiguration()
                     // 按点尺寸 × 屏幕缩放要像素尺寸，避免拿到 1x 画面被放大后发虚。
                     // SCDisplay.width 在当前系统返回点数，故不能简单按 display.width 取 min。
@@ -73,12 +84,13 @@ enum ScreenCapture {
                         let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
                         await finish(.success(image), completion)
                     } catch {
-                        await finish(legacyCapture(displayID: id), completion)
+                        await finish(excludingWindowID == nil ? legacyCapture(displayID: id) : .failed, completion)
                     }
                 } catch {
                     // 没权限时 SCShareableContent 抛 -3801，直接给权限提示，不做无意义兜底
                     let denied = isPermissionError(error) || !hasPermission()
-                    await finish(denied ? .noPermission : legacyCapture(displayID: id), completion)
+                    let fallback = excludingWindowID == nil ? legacyCapture(displayID: id) : .failed
+                    await finish(denied ? .noPermission : fallback, completion)
                 }
             }
         } else {

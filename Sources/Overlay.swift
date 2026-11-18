@@ -225,6 +225,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     var onFinish: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
+    var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
@@ -798,6 +799,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 self.commitText()
                 self.pinAndFinish()
             }
+            tb.onRecordSelection = { [weak self] in
+                guard let self, let selection = self.selection else { return }
+                self.commitText()
+                self.onRecordSelection?(selection)
+            }
             tb.onScrollCapture = { [weak self] vertical in
                 guard let self, let selection = self.selection else { return }
                 self.commitText()
@@ -1194,6 +1200,45 @@ extension OverlayView {
 
 // MARK: - 控制器
 
+/// 长截图期间只显示选区轮廓的鼠标穿透窗口，不遮挡或截获目标应用输入。
+private final class ScrollSelectionHintView: NSView {
+    var selection: NSRect
+
+    init(frame: NSRect, selection: NSRect) {
+        self.selection = selection
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let clippedSelection = selection.intersection(bounds)
+        guard !clippedSelection.isNull, clippedSelection.width > 0, clippedSelection.height > 0 else { return }
+
+        // 保留原截图界面中的选区阴影效果，让滚动时仍容易辨认采集范围。
+        let shade = NSBezierPath(rect: bounds)
+        shade.appendRect(clippedSelection)
+        shade.windingRule = .evenOdd
+        NSColor.black.withAlphaComponent(0.24).setFill()
+        shade.fill()
+
+        // 深色外描边加白色内描边，在亮/暗页面上都保持清晰。
+        let border = NSBezierPath(rect: clippedSelection.insetBy(dx: 1, dy: 1))
+        border.lineWidth = 3
+        NSColor.black.withAlphaComponent(0.8).setStroke()
+        border.stroke()
+        let inner = NSBezierPath(rect: clippedSelection.insetBy(dx: 1.5, dy: 1.5))
+        inner.lineWidth = 1
+        NSColor.white.withAlphaComponent(0.95).setStroke()
+        inner.stroke()
+    }
+}
+
 final class OverlayController {
 
     private let screen: NSScreen
@@ -1201,8 +1246,10 @@ final class OverlayController {
     private let previousApplication: NSRunningApplication?
     private var window: OverlayWindow?
     private var view: OverlayView?
+    private var scrollHintWindow: NSWindow?
     var onClose: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
+    var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     init(screen: NSScreen, image: CGImage) {
@@ -1234,6 +1281,7 @@ final class OverlayController {
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
         v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
+        v.onRecordSelection = { [weak self] region in self?.onRecordSelection?(region) }
         v.onScrollCapture = { [weak self] region, vertical in self?.onScrollCapture?(region, vertical) }
         w.contentView = v
 
@@ -1268,14 +1316,37 @@ final class OverlayController {
         view?.togglePaletteForTest()
     }
 
-    func hideForScrollCapture() {
+    func hideForScrollCapture(selection: NSRect) {
+        guard scrollHintWindow == nil else { return }
         window?.orderOut(nil)
+
+        let hint = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
+                            backing: .buffered, defer: false)
+        hint.isOpaque = false
+        hint.backgroundColor = .clear
+        hint.hasShadow = false
+        hint.level = .screenSaver
+        hint.ignoresMouseEvents = true
+        hint.acceptsMouseMovedEvents = false
+        hint.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        hint.contentView = ScrollSelectionHintView(frame: NSRect(origin: .zero, size: screen.frame.size),
+                                                   selection: selection)
+        scrollHintWindow = hint
+        hint.orderFrontRegardless()
+
         if let previousApplication {
             previousApplication.activate(options: [.activateAllWindows])
         }
     }
 
+    var scrollHintWindowID: CGWindowID? {
+        guard let number = scrollHintWindow?.windowNumber, number > 0 else { return nil }
+        return CGWindowID(number)
+    }
+
     func showAfterScrollCapture() {
+        scrollHintWindow?.orderOut(nil)
+        scrollHintWindow = nil
         guard let window, let view else { return }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
@@ -1283,6 +1354,8 @@ final class OverlayController {
     }
 
     func close() {
+        scrollHintWindow?.orderOut(nil)
+        scrollHintWindow = nil
         guard let w = window else { return }
         window = nil
         view = nil

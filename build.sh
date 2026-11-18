@@ -14,6 +14,9 @@ swiftc -swift-version 5 -O \
   -framework AppKit \
   -framework Carbon \
   -framework ScreenCaptureKit \
+  -framework AVFoundation \
+  -framework CoreMedia \
+  -framework CoreVideo \
   -framework ImageIO \
   -framework Vision \
   Sources/*.swift \

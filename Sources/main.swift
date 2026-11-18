@@ -8,6 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var captureItem: NSMenuItem?
     private var permissionItem: NSMenuItem?
     private var stopScrollItem: NSMenuItem?
+    private var recordFullscreenItem: NSMenuItem?
+    private var recordSelectionItem: NSMenuItem?
+    private var stopRecordingItem: NSMenuItem?
+    private var videoRecorder: VideoRecorder?
+    private var isStoppingRecording = false
+    private var quitAfterRecording = false
     private var controller: OverlayController?
     private var pinnedWindows: [PinnedImageController] = []
     private var scrollCapture: ScrollCaptureController?
@@ -32,6 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let recorder = videoRecorder else { return .terminateNow }
+        quitAfterRecording = true
+        if !isStoppingRecording {
+            isStoppingRecording = true
+            recorder.stop()
+            updateRecordingMenu()
+            setRecordingIndicator("正在结束录屏")
+        }
+        return .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -63,6 +81,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         capture.target = self
         m.addItem(capture)
         captureItem = capture
+
+        let recordFullscreen = NSMenuItem(title: "录制当前屏幕", action: #selector(menuRecordFullscreen), keyEquivalent: "")
+        recordFullscreen.target = self
+        m.addItem(recordFullscreen)
+        recordFullscreenItem = recordFullscreen
+
+        let recordSelection = NSMenuItem(title: "选择区域录制…", action: #selector(menuRecordSelection), keyEquivalent: "")
+        recordSelection.target = self
+        m.addItem(recordSelection)
+        recordSelectionItem = recordSelection
+
+        let stopRecording = NSMenuItem(title: "停止录屏", action: #selector(menuStopRecording), keyEquivalent: "")
+        stopRecording.target = self
+        stopRecording.isHidden = true
+        m.addItem(stopRecording)
+        stopRecordingItem = stopRecording
 
         let stopScroll = NSMenuItem(title: "停止长截图", action: #selector(menuStopScrollCapture), keyEquivalent: "")
         stopScroll.target = self
@@ -100,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionItem?.title = ScreenCapture.hasPermission()
             ? "屏幕录制权限：已授权"
             : "屏幕录制权限：未授权（点这里开启）"
+        updateRecordingMenu()
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -111,6 +146,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuCapture() { startCapture() }
+    @objc private func menuRecordFullscreen() {
+        guard let screen = ScreenCapture.screenUnderMouse() else { return }
+        startRecording(screen: screen, region: NSRect(origin: .zero, size: screen.frame.size))
+    }
+    @objc private func menuRecordSelection() { startCapture(forRecording: true) }
+    @objc private func menuStopRecording() { stopRecording() }
     @objc private func menuStopScrollCapture() { stopScrollCapture() }
     @objc private func menuSettings() { SettingsWindowController.shared.show() }
     @objc private func menuPermission() {
@@ -160,8 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: 截图流程
 
-    func startCapture() {
-        guard controller == nil, !capturing else { return }
+    func startCapture(forRecording: Bool = false) {
+        guard controller == nil, !capturing, videoRecorder == nil, scrollCapture == nil else { return }
         guard let screen = ScreenCapture.screenUnderMouse() else { return }
 
         // 没权限时直接走授权流程。不要"先抓一次再说"：
@@ -190,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.captureRequestID = nil
             switch outcome {
             case .success(let image):
-                self.present(screen: screen, image: image)
+                self.present(screen: screen, image: image, forRecording: forRecording)
             case .noPermission:
                 self.promptForPermission()
             case .failed:
@@ -199,22 +240,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func present(screen: NSScreen, image: CGImage) {
+    private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false) {
         let c = OverlayController(screen: screen, image: image)
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
+        c.onRecordSelection = { [weak self, weak c] region in
+            guard let self, let c, self.videoRecorder == nil, self.scrollCapture == nil else { return }
+            c.close()
+            self.controller = nil
+            self.startRecording(screen: screen, region: region)
+        }
         c.onScrollCapture = { [weak self, weak c] region, vertical in
             guard let self, let c else { return }
             self.startScrollCapture(screen: screen, region: region, vertical: vertical, overlay: c)
         }
         controller = c
         c.begin()
+        if forRecording {
+            c.onClose = { [weak self] in
+                self?.controller = nil
+                if self?.videoRecorder == nil { self?.statusItem?.button?.toolTip = "SnapMark 截图" }
+            }
+        }
     }
 
     private func startScrollCapture(screen: NSScreen, region: NSRect, vertical: Bool, overlay: OverlayController) {
         guard scrollCapture == nil else { return }
+        overlay.hideForScrollCapture(selection: region)
         let capture = ScrollCaptureController(screen: screen, region: region,
-                                              axis: vertical ? .vertical : .horizontal)
+                                              axis: vertical ? .vertical : .horizontal,
+                                              excludingWindowID: overlay.scrollHintWindowID)
         capture.onStatus = { [weak self] message in
             self?.statusItem?.button?.toolTip = message
         }
@@ -235,12 +290,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         scrollCapture = capture
         stopScrollItem?.isHidden = false
-        overlay.hideForScrollCapture()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { capture.start() }
     }
 
     private func stopScrollCapture() {
         scrollCapture?.stop()
+    }
+
+    // MARK: 视频录制
+
+    private func startRecording(screen: NSScreen, region: NSRect) {
+        guard videoRecorder == nil, scrollCapture == nil, controller == nil, !capturing else { return }
+        guard ScreenCapture.hasPermission() else {
+            promptForPermission()
+            return
+        }
+        let clipped = region.standardized.intersection(NSRect(origin: .zero, size: screen.frame.size))
+        guard !clipped.isNull, clipped.width >= 16, clipped.height >= 16 else {
+            showAlert("录屏区域太小", "请至少选择 16 × 16 点的区域。")
+            return
+        }
+        do {
+            let directory = SaveLocationStore.directory
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let baseName = "SnapMark-Recording-\(formatter.string(from: Date()))"
+            var output = directory.appendingPathComponent(baseName).appendingPathExtension("mp4")
+            var suffix = 2
+            while FileManager.default.fileExists(atPath: output.path) {
+                output = directory.appendingPathComponent("\(baseName)-\(suffix)").appendingPathExtension("mp4")
+                suffix += 1
+            }
+            let recorder = VideoRecorder(screen: screen, region: clipped, outputURL: output)
+            recorder.onStarted = { [weak self, weak recorder] in
+                guard let self, self.videoRecorder === recorder else { return }
+                self.setRecordingIndicator("录制中")
+                self.updateRecordingMenu()
+            }
+            recorder.onFinish = { [weak self, weak recorder] result in
+                guard let self else { return }
+                if self.videoRecorder === recorder { self.videoRecorder = nil }
+                self.isStoppingRecording = false
+                self.stopRecordingItem?.isHidden = true
+                self.updateRecordingMenu()
+                self.setRecordingIndicator(nil)
+                let shouldQuit = self.quitAfterRecording
+                self.quitAfterRecording = false
+                switch result {
+                case .success(let url):
+                    if shouldQuit {
+                        NSApp.terminate(nil)
+                    } else {
+                        let alert = NSAlert()
+                        alert.messageText = "录屏已保存"
+                        alert.informativeText = url.path
+                        alert.addButton(withTitle: "好")
+                        NSApp.activate(ignoringOtherApps: true)
+                        alert.runModal()
+                    }
+                case .failure(let error):
+                    if shouldQuit {
+                        NSApp.terminate(nil)
+                    } else {
+                        self.showAlert("录屏失败", error.localizedDescription)
+                    }
+                }
+            }
+            videoRecorder = recorder
+            updateRecordingMenu()
+            setRecordingIndicator("准备录制")
+            recorder.start()
+        } catch {
+            showAlert("无法创建录屏文件", error.localizedDescription)
+        }
+    }
+
+    private func stopRecording() {
+        guard !isStoppingRecording else { return }
+        isStoppingRecording = true
+        videoRecorder?.stop()
+        setRecordingIndicator("正在结束录屏")
+        updateRecordingMenu()
+    }
+
+    private func setRecordingIndicator(_ title: String?) {
+        guard let button = statusItem?.button else { return }
+        if let title {
+            let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: title)
+            image?.isTemplate = false
+            button.image = image
+            button.contentTintColor = .systemRed
+            button.toolTip = "SnapMark：\(title)"
+        } else {
+            let image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "SnapMark")
+            image?.isTemplate = true
+            button.image = image
+            button.contentTintColor = nil
+            button.toolTip = "SnapMark 截图"
+        }
+    }
+
+    private func updateRecordingMenu() {
+        let active = videoRecorder != nil
+        stopRecordingItem?.isHidden = !active
+        stopRecordingItem?.isEnabled = active && !isStoppingRecording
+        captureItem?.isEnabled = !active && !capturing && scrollCapture == nil
+        recordFullscreenItem?.isEnabled = !active && !capturing && scrollCapture == nil
+        recordSelectionItem?.isEnabled = !active && !capturing && scrollCapture == nil
     }
 
     private func pinImage(_ image: CGImage, size: NSSize) {
