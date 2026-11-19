@@ -1,8 +1,8 @@
 # SnapMark
 
-SnapMark 是一款使用 Swift、AppKit、ScreenCaptureKit 和 Vision 构建的原生 macOS 菜单栏截图工具。它支持截图、标注、OCR 文字选择、置顶预览、四方向长截图，以及无音频 MP4 录屏。
+SnapMark 是一款原生 macOS 菜单栏截图工具，基于 Swift、AppKit、ScreenCaptureKit 和 Vision 构建。它支持截图、标注、OCR 文字选择、置顶预览、四方向长截图，以及无音频 MP4 录屏。
 
-## 功能一览
+## 功能
 
 ### 截图与选区
 
@@ -31,7 +31,7 @@ SnapMark 是一款使用 Swift、AppKit、ScreenCaptureKit 和 Vision 构建的�
 3. 在选区内缓慢滚动。程序自动判断上/下或左/右方向，并根据相邻画面的重叠内容拼接；滚动过程中改变方向也会尝试继续拼接。
 4. 再次按截图快捷键，或从菜单栏选择“停止长截图”结束。完成结果会以置顶预览显示，可右键保存或销毁。
 
-长截图建议缓慢、连续滚动，避免快速跳过画面。对空白、重复或无法可靠匹配的帧，程序会保守跳过，以降低错误位移导致正文重复的风险；长图画布上限为 24,000,000 像素。
+长截图建议缓慢、连续滚动，避免快速跳过画面。对空白、重复或无法可靠匹配的帧，程序会保守跳过，以降低错误位移导致正文重复的风险。
 
 ### 屏幕录制
 
@@ -40,76 +40,36 @@ SnapMark 是一款使用 Swift、AppKit、ScreenCaptureKit 和 Vision 构建的�
 - 录制输出为 H.264 编码的 MP4，**不采集音频**。文件保存到当前配置的保存位置，并使用带日期时间的文件名。
 - 录制时菜单栏显示录制状态，且“录制当前屏幕 / 选择区域录制”会置灰；从菜单栏选择“停止录屏”正常结束并显示保存位置。录制过程中退出应用时会先结束录制。
 
-## 设置与权限
-
-- **设置入口**：菜单栏 SnapMark →“设置快捷键…”。可以录入新的全局截图快捷键，也可以修改保存文件夹或恢复“下载”文件夹。
-- **快捷键要求**：自定义组合键必须包含 `⌘`、`⌥` 或 `⌃` 之一；如果快捷键已被系统或其他应用占用，SnapMark 会保留原设置并提示重试。
-- **屏幕录制权限**：截图、长截图和录屏均需要 macOS 屏幕录制权限。首次使用时按提示前往“系统设置 → 隐私与安全性 → 屏幕录制”授权 SnapMark；也可以在菜单栏权限菜单项中打开设置。授权状态变化后，必要时按提示重新启动应用。
-
 ## 系统要求
 
 - macOS 14 或更新版本
 - Apple Silicon（当前构建目标为 `arm64`）
-- Xcode Command Line Tools（提供 `swiftc`）
 
-## 构建与运行
+## 下载
 
-```bash
-./build.sh
-open build/SnapMark.app
-```
+最新版本及历史版本均发布在 GitHub Releases：
 
-构建完成后，可将应用打包成 DMG 以便分发到其他 Mac：
+- 最新版：https://github.com/BabyWords/SnapMark/releases/latest
+- 全部版本：https://github.com/BabyWords/SnapMark/releases
 
-```bash
-./make-dmg.sh   # 生成 build/SnapMark.dmg，内含 SnapMark.app 与 Applications 快捷方式
-```
+## 自动更新
 
-构建脚本会优先使用本机名为 `SnapMark Signing` 的代码签名身份；若不存在则回退到 ad-hoc 签名。签名证书不包含在仓库中。首次启动时，macOS 可能会要求确认打开应用；屏幕捕获权限需由用户在系统设置中授予。在另一台 Mac 上运行时，若提示无法验证开发者，请右键点击应用并选择“打开”以首次放行。
+SnapMark 已接入 [Sparkle](https://sparkle-project.org) 自动更新，更新源托管在 GitHub Releases（无需自建服务器）。应用启动后会定期检查新版本，发现更新时提示下载并自动安装。更新包使用 EdDSA 密钥签名，防止更新源被篡改。
 
-## 自动更新（Sparkle）
+## 屏幕录制权限
 
-SnapMark 已接入 [Sparkle](https://sparkle-project.org) 自动更新，更新源托管在 GitHub Releases（无需自建服务器）。应用启动后会定期检查新版本，发现更新时提示下载并自动安装。
+截图、长截图和录屏均需要 macOS 屏幕录制权限。首次使用时按提示前往“系统设置 → 隐私与安全性 → 屏幕录制”授权 SnapMark；也可以在菜单栏权限菜单项中打开设置。授权状态变化后，必要时按提示重新启动应用。
 
-- **更新源**：`Info.plist` 的 `SUFeedURL` 指向 `https://github.com/BabyWords/SnapMark/releases/latest/download/appcast.xml`。
-- **签名校验**：更新包使用 EdDSA 密钥签名，公钥配置在 `Info.plist` 的 `SUPublicEDKey`；私钥保存在开发机的钥匙串中（由 `Vendor/tools/generate_keys` 生成）。
-- **发版**：在开发机执行一条命令即可完成构建、打包、生成更新源并上传 GitHub Release：
+## 签名风险
 
-  ```bash
-  ./release.sh 1.1.0 "本次更新的说明"
-  ```
+> ⚠️ 本应用使用本地自签名证书签名，**没有 Apple Developer ID 证书，也未经过 Apple 公证（notarization）**。
 
-  脚本会自动把版本号写入 `Info.plist`、构建、打包 zip、用 `generate_appcast` 生成并签名 `appcast.xml`，再通过 `gh` 上传到 GitHub Release。
+因此 macOS 的 Gatekeeper 会将其标记为“无法验证的开发者”或“来自身份不明的开发者”。首次在每台 Mac 上安装时需要手动放行一次：
 
-### 其他 Mac 首次安装
-
-都是自己的机器时，无需 Developer ID 证书（$99/年）。每台 Mac 首次安装做一次放行即可，之后自动更新不再弹窗：
-
-1. 首次打开时右键 →“打开”，或在“系统设置 → 隐私与安全性”点“仍要打开”。
+1. 右键点击应用 → “打开”（而不是直接双击），或在“系统设置 → 隐私与安全性”中点击“仍要打开”。
 2. 首次截图/录屏时，在“系统设置 → 隐私与安全性 → 屏幕录制”勾选 SnapMark 授权。
 
-> 若想让某台机器也能**打包发版**（而非仅接收更新），需把开发机的“SnapMark Signing”证书导出为 `.p12` 并导入到该机器，以保证所有机器使用同一签名身份。仅接收更新则无需这一步。
-
-## 开发自检
-
-```bash
-./build.sh
-./build/SnapMark.app/Contents/MacOS/SnapMark --selftest
-```
-
-自检涵盖演示图合成、纵向/横向四方向重叠匹配、滚动方向变化时的画布布局、白底文字小幅滚动与重复行歧义拒绝，以及录屏区域坐标换算。自检会输出演示 PNG 路径和尺寸。其他开发参数（如 `--demo`、`--capture-test`、`--cursor-probe`）仅用于本地排查，不属于面向用户的功能入口。
-
-## 项目结构
-
-```text
-Sources/       Swift 应用源码（截图、覆盖层、标注、OCR、长截图、录屏等）
-Resources/     应用图标
-Vendor/        Sparkle 自动更新框架与发版工具（generate_appcast、generate_keys 等）
-Info.plist     macOS 应用元数据、权限说明与更新源配置
-build.sh       本机构建脚本
-make-dmg.sh    DMG 打包脚本
-release.sh     发版脚本（构建 + 打包 + 生成更新源 + 上传 GitHub Release）
-```
+放行一次后即可正常使用，后续自动更新不再弹窗。此方案适合个人自有设备（无费用）；如需公开分发或彻底消除 Gatekeeper 警告，需购买 Apple Developer 账号（$99/年）并使用 Developer ID 证书签名 + 公证。
 
 ## 隐私说明
 
