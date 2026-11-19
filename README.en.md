@@ -54,7 +54,7 @@ The latest version and all previous versions are published on GitHub Releases:
 
 ## Automatic Updates
 
-SnapMark integrates [Sparkle](https://sparkle-project.org) automatic updates, with the update feed hosted on GitHub Releases (no self-hosted server needed). The app periodically checks for new versions and prompts to download and install them automatically. Update packages are signed with an EdDSA key to prevent tampering.
+SnapMark supports automatic updates: the app periodically checks for new versions and prompts to download and install them automatically.
 
 ## Screen Recording Permission
 

@@ -54,7 +54,7 @@ SnapMark 是一款原生 macOS 菜单栏截图工具，基于 Swift、AppKit、S
 
 ## 自动更新
 
-SnapMark 已接入 [Sparkle](https://sparkle-project.org) 自动更新，更新源托管在 GitHub Releases（无需自建服务器）。应用启动后会定期检查新版本，发现更新时提示下载并自动安装。更新包使用 EdDSA 密钥签名，防止更新源被篡改。
+SnapMark 支持自动更新：应用启动后会定期检查新版本，发现更新时提示下载并自动安装。
 
 ## 屏幕录制权限
 
