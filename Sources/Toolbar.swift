@@ -74,6 +74,7 @@ final class ToolbarView: NSView {
             let b = makeButton(symbols: tool.symbols, tooltip: tool.title, action: #selector(toolTapped(_:)))
             b.tag = tool.rawValue
             if tool == .text { b.image = ToolbarView.letterIcon("A", size: 15) }
+            if tool == .arrow { b.image = Renderer.arrowGlyphImage(style: .thin, size: 16) }
             if tool == .recognize { b.toolTip = "识别文字：拖选识别结果，⌘C 复制；再次点击退出" }
             toolButtons[tool] = b
             items.append(b)
@@ -173,6 +174,13 @@ final class ToolbarView: NSView {
 
     func setActiveTool(_ tool: Tool) {
         for (t, b) in toolButtons { b.isActive = (t == tool) }
+    }
+
+    /// 更新箭头按钮图标为当前选择的箭头样式，让工具栏实时反映所选样式。
+    func setArrowStyle(_ style: ArrowStyle) {
+        guard let b = toolButtons[.arrow] else { return }
+        b.image = Renderer.arrowGlyphImage(style: style, size: 16)
+        b.toolTip = "箭头：\(style.title)（点击更换样式）"
     }
 
     func setColor(_ color: NSColor) {

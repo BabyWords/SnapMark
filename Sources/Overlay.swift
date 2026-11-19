@@ -917,6 +917,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 self.hideArrowStylePicker()
                 self.tool = .arrow
                 self.toolbar?.setActiveTool(.arrow)
+                self.toolbar?.setArrowStyle(style)
                 self.textSelectionMode = false
                 self.refreshCursor()
             }

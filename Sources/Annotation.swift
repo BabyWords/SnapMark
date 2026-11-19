@@ -257,19 +257,19 @@ enum Renderer {
         ctx.fillPath()
     }
 
-    /// 粗箭头：更粗的箭杆与更大的箭头头，强调醒目。
+    /// 粗箭头：箭杆与箭头头略粗于细箭头，但比例与细箭头保持一致，避免突兀。
     private static func drawThickArrow(p0: CGPoint, p1: CGPoint, angle: CGFloat, len: CGFloat,
                                        lineWidth: CGFloat, in ctx: CGContext, color: CGColor) {
-        let w = lineWidth * 2.5
-        let head = min(max(w * 3.2, 14), len)
-        let spread: CGFloat = .pi / 6
+        let w = lineWidth * 1.7
+        let head = min(max(lineWidth * 4.2, 12), len)
+        let spread: CGFloat = .pi / 6.3
 
         ctx.setStrokeColor(color)
         ctx.setFillColor(color)
         ctx.setLineWidth(w)
 
         ctx.move(to: p0)
-        ctx.addLine(to: CGPoint(x: p1.x - cos(angle) * head * 0.8, y: p1.y - sin(angle) * head * 0.8))
+        ctx.addLine(to: CGPoint(x: p1.x - cos(angle) * head * 0.82, y: p1.y - sin(angle) * head * 0.82))
         ctx.strokePath()
 
         let headPath = CGMutablePath()
@@ -283,18 +283,18 @@ enum Renderer {
         ctx.fillPath()
     }
 
-    /// 渐变粗箭头：锥形箭杆从细到粗渐变 + 实心三角头。
+    /// 渐变粗箭头：锥形箭杆从细到粗渐变 + 实心三角头，整体尺寸与细箭头协调。
     private static func drawTaperedArrow(p0: CGPoint, p1: CGPoint, angle: CGFloat, len: CGFloat,
                                          lineWidth: CGFloat, in ctx: CGContext, color: CGColor) {
-        let w0 = max(lineWidth * 0.7, 1.5)   // 起点整宽（窄端）
-        let w1 = lineWidth * 2.6             // 终点整宽（粗端）
-        let head = min(max(lineWidth * 4.5, 13), len)
-        let spread: CGFloat = .pi / 6
+        let w0 = max(lineWidth * 0.6, 1.2)   // 起点整宽（窄端）
+        let w1 = lineWidth * 1.8             // 终点整宽（粗端）
+        let head = min(max(lineWidth * 4.2, 12), len)
+        let spread: CGFloat = .pi / 6.3
 
         let nx = -sin(angle)
         let ny = cos(angle)
-        let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.9,
-                               y: p1.y - sin(angle) * head * 0.9)
+        let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.88,
+                               y: p1.y - sin(angle) * head * 0.88)
 
         ctx.setFillColor(color)
         ctx.setStrokeColor(color)
@@ -320,6 +320,79 @@ enum Renderer {
                                      y: p1.y - sin(angle + spread) * head))
         headPath.closeSubpath()
         ctx.addPath(headPath)
+        ctx.fillPath()
+    }
+
+    // MARK: 小尺寸箭头图标（工具栏按钮 / 样式选择器预览共用）
+
+    /// 生成一个对角方向的小箭头图标（白色，等比缩放，不受真实箭头最小头尺寸限制）。
+    /// 供工具栏箭头按钮与样式选择浮层预览复用，保证“所点即所见”。
+    static func arrowGlyphImage(style: ArrowStyle, size: CGFloat) -> NSImage {
+        return NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            drawArrowGlyph(style: style, size: size, in: ctx)
+            return true
+        }
+    }
+
+    private static func drawArrowGlyph(style: ArrowStyle, size: CGFloat, in ctx: CGContext) {
+        let s = size
+        let pad = s * 0.17
+        let p0 = CGPoint(x: pad, y: pad)
+        let p1 = CGPoint(x: s - pad, y: s - pad)
+        let dx = p1.x - p0.x, dy = p1.y - p0.y
+        let angle = atan2(dy, dx)
+        let nx = -sin(angle), ny = cos(angle)
+
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.setStrokeColor(NSColor.white.cgColor)
+
+        switch style {
+        case .thin:
+            let lw = s * 0.12
+            let head = s * 0.36
+            let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.85, y: p1.y - sin(angle) * head * 0.85)
+            ctx.setLineWidth(lw)
+            ctx.move(to: p0)
+            ctx.addLine(to: shaftEnd)
+            ctx.strokePath()
+            fillGlyphHead(tip: p1, angle: angle, head: head, spread: .pi / 7, in: ctx)
+
+        case .thick:
+            let lw = s * 0.20
+            let head = s * 0.42
+            let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.82, y: p1.y - sin(angle) * head * 0.82)
+            ctx.setLineWidth(lw)
+            ctx.move(to: p0)
+            ctx.addLine(to: shaftEnd)
+            ctx.strokePath()
+            fillGlyphHead(tip: p1, angle: angle, head: head, spread: .pi / 6.2, in: ctx)
+
+        case .tapered:
+            let w0 = s * 0.08
+            let w1 = s * 0.22
+            let head = s * 0.42
+            let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.85, y: p1.y - sin(angle) * head * 0.85)
+            let half0 = w0 / 2, half1 = w1 / 2
+            let shaft = CGMutablePath()
+            shaft.move(to: CGPoint(x: p0.x + nx * half0, y: p0.y + ny * half0))
+            shaft.addLine(to: CGPoint(x: shaftEnd.x + nx * half1, y: shaftEnd.y + ny * half1))
+            shaft.addLine(to: CGPoint(x: shaftEnd.x - nx * half1, y: shaftEnd.y - ny * half1))
+            shaft.addLine(to: CGPoint(x: p0.x - nx * half0, y: p0.y - ny * half0))
+            shaft.closeSubpath()
+            ctx.addPath(shaft)
+            ctx.fillPath()
+            fillGlyphHead(tip: p1, angle: angle, head: head, spread: .pi / 6.2, in: ctx)
+        }
+    }
+
+    private static func fillGlyphHead(tip: CGPoint, angle: CGFloat, head: CGFloat, spread: CGFloat, in ctx: CGContext) {
+        let path = CGMutablePath()
+        path.move(to: tip)
+        path.addLine(to: CGPoint(x: tip.x - cos(angle - spread) * head, y: tip.y - sin(angle - spread) * head))
+        path.addLine(to: CGPoint(x: tip.x - cos(angle + spread) * head, y: tip.y - sin(angle + spread) * head))
+        path.closeSubpath()
+        ctx.addPath(path)
         ctx.fillPath()
     }
 

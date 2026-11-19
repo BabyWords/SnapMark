@@ -230,8 +230,8 @@ final class ArrowStylePickerView: NSView {
         didSet { needsDisplay = true }
     }
 
-    private static let cardW: CGFloat = 64
-    private static let cardH: CGFloat = 40
+    private static let cardW: CGFloat = 52
+    private static let cardH: CGFloat = 36
     private static let gap: CGFloat = 6
     private static let pad: CGFloat = 8
 
@@ -258,7 +258,7 @@ final class ArrowStylePickerView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        guard NSGraphicsContext.current != nil else { return }
 
         // 面板背景
         let bg = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
@@ -280,15 +280,10 @@ final class ArrowStylePickerView: NSView {
             }
             card.fill()
 
-            // 箭头预览（白色，复用真实渲染逻辑，保证所见即所得）
-            ctx.saveGState()
-            ctx.clip(to: rect.insetBy(dx: 2, dy: 2))
-            let a = Annotation(kind: .arrow,
-                               start: CGPoint(x: rect.minX + 12, y: rect.midY),
-                               end: CGPoint(x: rect.maxX - 12, y: rect.midY),
-                               color: .white, lineWidth: 2.5, arrowStyle: style)
-            Renderer.draw([a], in: ctx, imageScale: 1, base: nil)
-            ctx.restoreGState()
+            // 箭头预览：小尺寸白色箭头，与工具栏按钮图标一致，所见即所得
+            let icon = Renderer.arrowGlyphImage(style: style, size: 24)
+            icon.draw(in: NSRect(x: rect.midX - 12, y: rect.midY - 12, width: 24, height: 24),
+                      from: .zero, operation: .sourceOver, fraction: 1)
         }
     }
 
