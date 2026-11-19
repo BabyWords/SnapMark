@@ -220,6 +220,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     private var arrowStylePicker: ArrowStylePickerView?
 
     private var toolbar: ToolbarView?
+    private var recordConfirmButton: NSButton?
     private var textField: NSTextField?
     private var textAnchor: NSPoint = .zero
     private var committingText = false
@@ -230,8 +231,8 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
-    /// 为“选择区域录制”准备的模式：框选完成后立即触发 onRecordSelection，
-    /// 不显示标注工具栏，也不进入标注流程。
+    /// 为“选择区域录制”准备的模式：框选完成后显示“开始录制”确认按钮，
+    /// 点击确认后才触发 onRecordSelection；不显示标注工具栏，也不进入标注流程。
     var recordsSelectionOnRelease = false
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
@@ -339,6 +340,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if let pv = palettePicker, pv.frame.contains(p) { return .arrow }
         if let ap = arrowStylePicker, ap.frame.contains(p) { return .arrow }
         if let tb = toolbar, !tb.isHidden, tb.frame.contains(p) { return .arrow }
+        if let b = recordConfirmButton, !b.isHidden, b.frame.contains(p) { return .arrow }
         if phase == .moving { return .closedHand }
         if textSelectionMode, selection?.contains(p) == true { return .iBeam }
         if let sel = selection, resizeHandle(at: p, in: sel) != nil, phase == .idle {
@@ -350,6 +352,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     private var insideCursor: NSCursor {
+        if recordsSelectionOnRelease { return .openHand }   // 录制模式：选区内可拖动
         switch tool {
         case .select: return .openHand      // 可拖动整个选区
         case .text, .recognize: return .iBeam
@@ -492,6 +495,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if let tb = toolbar, !tb.isHidden { addCursorRect(tb.frame, cursor: .arrow) }
         if let pv = palettePicker { addCursorRect(pv.frame, cursor: .arrow) }
         if let ap = arrowStylePicker { addCursorRect(ap.frame, cursor: .arrow) }
+        if let b = recordConfirmButton, !b.isHidden { addCursorRect(b.frame, cursor: .arrow) }
     }
 
     private func resizeHandleRects(_ sel: NSRect) -> [NSRect] {
@@ -589,7 +593,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if event.clickCount == 2, let sel = selection, sel.contains(p) {
             if textSelectionMode {
                 if !recognizing { selectAllText() }
-            } else {
+            } else if !recordsSelectionOnRelease {
                 copyAndFinish()
             }
             return
@@ -612,8 +616,8 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         if let sel = selection, sel.contains(p) {
-            // 移动整个选区（移动工具，或按住 ⌘ 临时移动）
-            if tool == .select || event.modifierFlags.contains(.command) {
+            // 移动整个选区（移动工具、录制模式，或按住 ⌘ 临时移动）
+            if tool == .select || recordsSelectionOnRelease || event.modifierFlags.contains(.command) {
                 phase = .moving
                 moveOrigin = p
                 moveHistoryBase = Snapshot(selection: selection, annotations: annotations)
@@ -636,6 +640,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         dragOrigin = p
         phase = .selecting
         toolbar?.isHidden = true
+        hideRecordConfirmButton()
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -676,11 +681,13 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             selection = base.offsetBy(dx: cdx, dy: cdy)
             annotations = moveBaseAnnotations.map { $0.offsetBy(dx: cdx, dy: cdy) }
             layoutToolbar()
+            layoutRecordConfirmButton()
 
         case .resizing:
             guard let handle = resizeHandle else { return }
             selection = resizedSelection(from: resizeBaseSelection, handle: handle, to: p)
             layoutToolbar()
+            layoutRecordConfirmButton()
 
         case .textSelecting:
             guard let origin = textDragOrigin else { return }
@@ -700,7 +707,8 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 if recordsSelectionOnRelease {
                     savedSelection = nil
                     savedAnnotations = []
-                    onRecordSelection?(r)
+                    showRecordConfirmButton()
+                    refreshCursor()
                     return
                 }
                 if let old = savedSelection, abs(old.width - r.width) < 1.5, abs(old.height - r.height) < 1.5,
@@ -845,6 +853,53 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         x = min(max(margin, x), bounds.maxX - size.width - margin)
         tb.frame.origin = NSPoint(x: x, y: y)
         layoutPalette()
+    }
+
+    // MARK: 录制确认
+
+    private func showRecordConfirmButton() {
+        if recordConfirmButton == nil {
+            let b = NSButton(title: "", target: self, action: #selector(recordConfirmTapped))
+            b.attributedTitle = NSAttributedString(string: "开始录制", attributes: [
+                .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: NSColor.white
+            ])
+            b.isBordered = false
+            b.wantsLayer = true
+            b.layer?.backgroundColor = NSColor.systemRed.cgColor
+            b.layer?.cornerRadius = 8
+            b.sizeToFit()
+            b.frame.size = NSSize(width: max(b.frame.width + 32, 128), height: 34)
+            addSubview(b)
+            recordConfirmButton = b
+        }
+        recordConfirmButton?.isHidden = false
+        layoutRecordConfirmButton()
+        refreshCursor()
+    }
+
+    private func layoutRecordConfirmButton() {
+        guard let b = recordConfirmButton, let sel = selection else { return }
+        let margin: CGFloat = 10
+        var y = sel.minY - b.frame.height - margin
+        if y < margin { y = sel.maxY + margin }
+        if y + b.frame.height > bounds.maxY - margin {
+            y = max(margin, sel.maxY + margin)
+        }
+        var x = sel.midX - b.frame.width / 2
+        x = min(max(margin, x), bounds.maxX - b.frame.width - margin)
+        b.frame.origin = NSPoint(x: x, y: y)
+    }
+
+    private func hideRecordConfirmButton() {
+        recordConfirmButton?.removeFromSuperview()
+        recordConfirmButton = nil
+    }
+
+    @objc private func recordConfirmTapped() {
+        guard let selection else { return }
+        hideRecordConfirmButton()
+        onRecordSelection?(selection)
     }
 
     private func pushHistory(selection: NSRect?, annotations: [Annotation]) {
