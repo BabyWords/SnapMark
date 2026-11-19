@@ -59,7 +59,13 @@ SnapMark 是一款使用 Swift、AppKit、ScreenCaptureKit 和 Vision 构建的�
 open build/SnapMark.app
 ```
 
-构建脚本会优先使用本机名为 `SnapMark Signing` 的代码签名身份；若不存在则回退到 ad-hoc 签名。签名证书不包含在仓库中。首次启动时，macOS 可能会要求确认打开应用；屏幕捕获权限需由用户在系统设置中授予。
+构建完成后，可将应用打包成 DMG 以便分发到其他 Mac：
+
+```bash
+./make-dmg.sh   # 生成 build/SnapMark.dmg，内含 SnapMark.app 与 Applications 快捷方式
+```
+
+构建脚本会优先使用本机名为 `SnapMark Signing` 的代码签名身份；若不存在则回退到 ad-hoc 签名。签名证书不包含在仓库中。首次启动时，macOS 可能会要求确认打开应用；屏幕捕获权限需由用户在系统设置中授予。在另一台 Mac 上运行时，若提示无法验证开发者，请右键点击应用并选择“打开”以首次放行。
 
 ## 开发自检
 
@@ -77,6 +83,7 @@ Sources/       Swift 应用源码（截图、覆盖层、标注、OCR、长截�
 Resources/     应用图标
 Info.plist     macOS 应用元数据与权限说明
 build.sh       本机构建脚本
+make-dmg.sh    DMG 打包脚本
 ```
 
 ## 隐私说明
