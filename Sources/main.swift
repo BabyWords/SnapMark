@@ -131,11 +131,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         m.addItem(perm)
         permissionItem = perm
 
+        let checkUpdates = NSMenuItem(title: "检查更新…", action: #selector(menuCheckForUpdates), keyEquivalent: "")
+        checkUpdates.target = self
+        m.addItem(checkUpdates)
+
         let relaunch = NSMenuItem(title: "重新启动 SnapMark", action: #selector(menuRelaunch), keyEquivalent: "")
         relaunch.target = self
         m.addItem(relaunch)
 
         m.addItem(.separator())
+
+        let about = NSMenuItem(title: "关于 SnapMark", action: #selector(menuAbout), keyEquivalent: "")
+        about.target = self
+        m.addItem(about)
 
         let quit = NSMenuItem(title: "退出 SnapMark", action: #selector(menuQuit), keyEquivalent: "")
         quit.target = self
@@ -175,6 +183,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuRelaunch() { relaunchApp() }
+    @objc private func menuCheckForUpdates() { updaterController?.updater.checkForUpdates() }
+    @objc private func menuAbout() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        showAlert("SnapMark", "版本 \(version)\n\n原生 macOS 截图、长截图与录屏工具。")
+    }
 
     // MARK: 快捷键
 
