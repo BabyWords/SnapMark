@@ -258,15 +258,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false, presetFullscreen: Bool = false) {
         let preset: NSRect? = presetFullscreen ? NSRect(origin: .zero, size: screen.frame.size) : nil
         let c = OverlayController(screen: screen, image: image, recordsSelectionOnRelease: forRecording,
-                                  presetSelection: preset, audioSource: currentAudioSource())
+                                  presetSelection: preset, audioConfig: currentAudioConfig())
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
-        c.onRecordSelection = { [weak self, weak c] region, source in
+        c.onRecordSelection = { [weak self, weak c] region, config in
             guard let self, let c, self.videoRecorder == nil, self.scrollCapture == nil else { return }
-            UserDefaults.standard.set(source.rawValue, forKey: Self.audioSourceKey)
+            Self.saveAudioConfig(config)
             c.close()
             self.controller = nil
-            self.startRecording(screen: screen, region: region, audioSource: source)
+            self.startRecording(screen: screen, region: region, config: config)
         }
         c.onScrollCapture = { [weak self, weak c] region, vertical in
             guard let self, let c else { return }
@@ -318,23 +318,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: 视频录制
 
     private static let audioSourceKey = "recordingAudioSource"
+    private static let microphoneDeviceKey = "recordingMicrophoneDeviceID"
 
-    /// 读取用户上次选择的声音来源；从未选择时默认“系统声音”。
-    private func currentAudioSource() -> RecordingAudioSource {
+    /// 读取用户上次选择的声音配置；从未选择时默认“系统声音”。
+    private func currentAudioConfig() -> RecordingAudioConfig {
+        let source: RecordingAudioSource
         if UserDefaults.standard.object(forKey: Self.audioSourceKey) == nil {
-            return .system
+            source = .system
+        } else {
+            source = RecordingAudioSource(rawValue: UserDefaults.standard.integer(forKey: Self.audioSourceKey)) ?? .system
         }
-        return RecordingAudioSource(rawValue: UserDefaults.standard.integer(forKey: Self.audioSourceKey)) ?? .system
+        let micID = UserDefaults.standard.string(forKey: Self.microphoneDeviceKey)
+        return RecordingAudioConfig(source: source, microphoneDeviceID: micID)
     }
 
-    private func startRecording(screen: NSScreen, region: NSRect, audioSource: RecordingAudioSource) {
+    private static func saveAudioConfig(_ config: RecordingAudioConfig) {
+        UserDefaults.standard.set(config.source.rawValue, forKey: audioSourceKey)
+        if let id = config.microphoneDeviceID {
+            UserDefaults.standard.set(id, forKey: microphoneDeviceKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: microphoneDeviceKey)
+        }
+    }
+
+    private func startRecording(screen: NSScreen, region: NSRect, config: RecordingAudioConfig) {
         guard videoRecorder == nil, scrollCapture == nil, controller == nil, !capturing else { return }
         guard ScreenCapture.hasPermission() else {
             promptForPermission()
             return
         }
         // 采集麦克风时先确保麦克风权限已授权，否则录出来没有声音。
-        if audioSource.capturesMicrophone {
+        if config.capturesMicrophone {
             ensureMicrophonePermission { [weak self] granted in
                 guard let self else { return }
                 guard granted else {
@@ -342,11 +356,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                    "录屏要采集麦克风声音，请在「系统设置 → 隐私与安全性 → 麦克风」里打开 SnapMark，然后重试。")
                     return
                 }
-                self.beginRecording(screen: screen, region: region, audioSource: audioSource)
+                self.beginRecording(screen: screen, region: region, config: config)
             }
             return
         }
-        beginRecording(screen: screen, region: region, audioSource: audioSource)
+        beginRecording(screen: screen, region: region, config: config)
     }
 
     private func ensureMicrophonePermission(_ completion: @escaping (Bool) -> Void) {
@@ -362,7 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func beginRecording(screen: NSScreen, region: NSRect, audioSource: RecordingAudioSource) {
+    private func beginRecording(screen: NSScreen, region: NSRect, config: RecordingAudioConfig) {
         let clipped = region.standardized.intersection(NSRect(origin: .zero, size: screen.frame.size))
         guard !clipped.isNull, clipped.width >= 16, clipped.height >= 16 else {
             showAlert("录屏区域太小", "请至少选择 16 × 16 点的区域。")
@@ -389,7 +403,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return CGWindowID(number)
             }()
             let recorder = VideoRecorder(screen: screen, region: clipped, outputURL: output,
-                                         excludingWindowID: excludingWindowID, audioSource: audioSource)
+                                         excludingWindowID: excludingWindowID,
+                                         audioSource: config.source,
+                                         microphoneDeviceID: config.microphoneDeviceID)
             recorder.onStarted = { [weak self, weak recorder] in
                 guard let self, self.videoRecorder === recorder else { return }
                 self.setRecordingIndicator("录制中")

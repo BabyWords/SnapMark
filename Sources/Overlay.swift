@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ImageIO
 
 final class OverlayWindow: NSWindow {
@@ -147,6 +148,55 @@ final class CanvasView: PassthroughView {
     }
 }
 
+/// 红色圆角下拉按钮，视觉与“开始录制”按钮一致。
+final class PillDropdownButton: NSButton {
+    private var itemTitles: [String] = []
+    private var selected = 0
+    var onSelect: ((Int) -> Void)?
+
+    var selectedIndex: Int { selected }
+
+    func setItems(_ titles: [String], selectedIndex: Int) {
+        itemTitles = titles
+        selected = min(max(selectedIndex, 0), max(0, titles.count - 1))
+        refreshTitle()
+    }
+
+    private func refreshTitle() {
+        let text = itemTitles.isEmpty ? "" : (itemTitles[selected] + "  ▾")
+        attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ])
+        sizeToFit()
+        frame.size = NSSize(width: frame.width + 28, height: 34)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !itemTitles.isEmpty else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for (i, t) in itemTitles.enumerated() {
+            let item = NSMenuItem(title: t, action: #selector(pick(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = i
+            item.state = (i == selected) ? .on : .off
+            item.isEnabled = true
+            menu.addItem(item)
+        }
+        let p = NSPoint(x: 0, y: bounds.height + 4)
+        menu.popUp(positioning: nil, at: p, in: self)
+    }
+
+    @objc private func pick(_ sender: NSMenuItem) {
+        let idx = sender.tag
+        guard idx != selected else { return }
+        selected = idx
+        refreshTitle()
+        onSelect?(selected)
+    }
+}
+
 /// 截图主视图：负责交互
 final class OverlayView: NSView, NSTextFieldDelegate {
 
@@ -221,7 +271,9 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     private var toolbar: ToolbarView?
     private var recordConfirmButton: NSButton?
-    private var audioSourceControl: NSPopUpButton?
+    private var audioSourceControl: PillDropdownButton?
+    private var microphoneDeviceControl: PillDropdownButton?
+    private var microphoneDevices: [AVCaptureDevice] = []
     private var textField: NSTextField?
     private var textAnchor: NSPoint = .zero
     private var committingText = false
@@ -229,15 +281,15 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     var onFinish: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
-    var onRecordSelection: ((NSRect, RecordingAudioSource) -> Void)?
+    var onRecordSelection: ((NSRect, RecordingAudioConfig) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     /// 为“选择区域录制”准备的模式：框选完成后显示“开始录制”确认按钮，
     /// 点击确认后才触发 onRecordSelection；不显示标注工具栏，也不进入标注流程。
     var recordsSelectionOnRelease = false
 
-    /// 录制时选中的声音来源；由主流程传入默认值，用户可在确认界面调整。
-    var selectedAudioSource: RecordingAudioSource = .system
+    /// 录制时选中的声音配置；由主流程传入默认值，用户可在确认界面调整。
+    var selectedAudioConfig: RecordingAudioConfig = .default
 
     init(frame: NSRect, baseImage: CGImage, imageScale: CGFloat) {
         self.baseImage = baseImage
@@ -346,6 +398,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if let tb = toolbar, !tb.isHidden, tb.frame.contains(p) { return .arrow }
         if let b = recordConfirmButton, !b.isHidden, b.frame.contains(p) { return .arrow }
         if let c = audioSourceControl, !c.isHidden, c.frame.contains(p) { return .arrow }
+        if let m = microphoneDeviceControl, !m.isHidden, m.frame.contains(p) { return .arrow }
         if phase == .moving { return .closedHand }
         if textSelectionMode, selection?.contains(p) == true { return .iBeam }
         if let sel = selection, resizeHandle(at: p, in: sel) != nil, phase == .idle {
@@ -502,6 +555,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if let ap = arrowStylePicker { addCursorRect(ap.frame, cursor: .arrow) }
         if let b = recordConfirmButton, !b.isHidden { addCursorRect(b.frame, cursor: .arrow) }
         if let c = audioSourceControl, !c.isHidden { addCursorRect(c.frame, cursor: .arrow) }
+        if let m = microphoneDeviceControl, !m.isHidden { addCursorRect(m.frame, cursor: .arrow) }
     }
 
     private func resizeHandleRects(_ sel: NSRect) -> [NSRect] {
@@ -887,29 +941,72 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             recordConfirmButton = b
         }
         if audioSourceControl == nil {
-            let pop = NSPopUpButton(frame: .zero, pullsDown: false)
-            pop.addItems(withTitles: RecordingAudioSource.allCases.map(\.title))
-            pop.selectItem(at: RecordingAudioSource.allCases.firstIndex(of: selectedAudioSource) ?? 0)
-            pop.target = self
-            pop.action = #selector(audioSourceChanged)
-            pop.font = NSFont.systemFont(ofSize: 12)
-            pop.sizeToFit()
-            pop.frame.size = NSSize(width: max(pop.frame.width + 16, 128), height: 30)
+            let pop = makeDropdown()
             addSubview(pop)
             audioSourceControl = pop
         }
+        if microphoneDeviceControl == nil {
+            let pop = makeDropdown()
+            addSubview(pop)
+            microphoneDeviceControl = pop
+        }
+
+        // 声音来源
+        audioSourceControl?.setItems(RecordingAudioSource.allCases.map(\.title),
+                                    selectedIndex: selectedAudioConfig.source.rawValue)
+        audioSourceControl?.onSelect = { [weak self] idx in
+            guard let self, let s = RecordingAudioSource(rawValue: idx) else { return }
+            self.selectedAudioConfig.source = s
+            self.syncMicrophoneDeviceControl()
+            self.layoutRecordConfirmButton()
+            self.refreshCursor()
+        }
+
+        // 麦克风设备列表（读取当前可用的输入设备）
+        microphoneDevices = RecordingAudioConfig.microphoneDevices()
+        let deviceTitles = microphoneDevices.map { Self.truncatedName($0.localizedName) }
+        microphoneDeviceControl?.setItems(deviceTitles, selectedIndex: 0)
+        microphoneDeviceControl?.onSelect = { [weak self] idx in
+            guard let self, self.microphoneDevices.indices.contains(idx) else { return }
+            self.selectedAudioConfig.microphoneDeviceID = self.microphoneDevices[idx].uniqueID
+        }
+        if let savedID = selectedAudioConfig.microphoneDeviceID,
+           let i = microphoneDevices.firstIndex(where: { $0.uniqueID == savedID }) {
+            microphoneDeviceControl?.setItems(deviceTitles, selectedIndex: i)
+        }
+
+        syncMicrophoneDeviceControl()
         recordConfirmButton?.isHidden = false
         audioSourceControl?.isHidden = false
         layoutRecordConfirmButton()
         refreshCursor()
     }
 
+    private func makeDropdown() -> PillDropdownButton {
+        let pop = PillDropdownButton()
+        pop.isBordered = false
+        pop.wantsLayer = true
+        pop.layer?.backgroundColor = NSColor.systemRed.cgColor
+        pop.layer?.cornerRadius = 8
+        return pop
+    }
+
+    private func syncMicrophoneDeviceControl() {
+        microphoneDeviceControl?.isHidden = !selectedAudioConfig.capturesMicrophone
+    }
+
+    private static func truncatedName(_ s: String) -> String {
+        s.count > 26 ? String(s.prefix(26)) + "…" : s
+    }
+
     private func layoutRecordConfirmButton() {
         guard let b = recordConfirmButton, let sel = selection else { return }
         let margin: CGFloat = 10
-        let gap: CGFloat = 10
-        let popW = audioSourceControl?.frame.width ?? 0
-        let totalW = b.frame.width + (popW > 0 ? gap + popW : 0)
+        let gap: CGFloat = 8
+        let controls: [NSView?] = [b, audioSourceControl, microphoneDeviceControl]
+        let visible = controls.compactMap { $0 }.filter { !$0.isHidden }
+        let totalW = visible.map { $0.frame.width }.reduce(0, +) + CGFloat(max(0, visible.count - 1)) * gap
+
         var y = sel.minY - b.frame.height - margin
         if y < margin { y = sel.maxY + margin }
         // 选区占满屏幕（如全屏录制）时，把按钮拉回屏幕内，避免跑到屏幕外。
@@ -919,10 +1016,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         if y < margin { y = margin }
         var x = sel.midX - totalW / 2
         x = min(max(margin, x), bounds.maxX - totalW - margin)
-        b.frame.origin = NSPoint(x: x, y: y)
-        if let pop = audioSourceControl {
-            pop.frame.origin = NSPoint(x: x + b.frame.width + gap,
-                                       y: y + (b.frame.height - pop.frame.height) / 2)
+
+        var cursorX = x
+        for control in visible {
+            control.frame.origin = NSPoint(x: cursorX, y: y + (b.frame.height - control.frame.height) / 2)
+            cursorX += control.frame.width + gap
         }
     }
 
@@ -931,18 +1029,15 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         recordConfirmButton = nil
         audioSourceControl?.removeFromSuperview()
         audioSourceControl = nil
-    }
-
-    @objc private func audioSourceChanged(_ sender: NSPopUpButton) {
-        if let source = RecordingAudioSource(rawValue: sender.indexOfSelectedItem) {
-            selectedAudioSource = source
-        }
+        microphoneDeviceControl?.removeFromSuperview()
+        microphoneDeviceControl = nil
+        microphoneDevices = []
     }
 
     @objc private func recordConfirmTapped() {
         guard let selection else { return }
         hideRecordConfirmButton()
-        onRecordSelection?(selection, selectedAudioSource)
+        onRecordSelection?(selection, selectedAudioConfig)
     }
 
     private func pushHistory(selection: NSRect?, annotations: [Annotation]) {
@@ -1444,22 +1539,22 @@ final class OverlayController {
     private let previousApplication: NSRunningApplication?
     private let recordsSelectionOnRelease: Bool
     private let presetSelection: NSRect?
-    private let defaultAudioSource: RecordingAudioSource
+    private let defaultAudioConfig: RecordingAudioConfig
     private var window: OverlayWindow?
     private var view: OverlayView?
     private var scrollHintWindow: NSWindow?
     var onClose: (() -> Void)?
     var onPinImage: ((CGImage, NSSize) -> Void)?
-    var onRecordSelection: ((NSRect, RecordingAudioSource) -> Void)?
+    var onRecordSelection: ((NSRect, RecordingAudioConfig) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
     init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false,
-         presetSelection: NSRect? = nil, audioSource: RecordingAudioSource = .system) {
+         presetSelection: NSRect? = nil, audioConfig: RecordingAudioConfig = .default) {
         self.screen = screen
         self.image = image
         self.recordsSelectionOnRelease = recordsSelectionOnRelease
         self.presetSelection = presetSelection
-        self.defaultAudioSource = audioSource
+        self.defaultAudioConfig = audioConfig
         let current = NSRunningApplication.current.bundleIdentifier
         let front = NSWorkspace.shared.frontmostApplication
         self.previousApplication = front?.bundleIdentifier == current ? nil : front
@@ -1486,10 +1581,10 @@ final class OverlayController {
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
         v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
-        v.onRecordSelection = { [weak self] region, source in self?.onRecordSelection?(region, source) }
+        v.onRecordSelection = { [weak self] region, config in self?.onRecordSelection?(region, config) }
         v.onScrollCapture = { [weak self] region, vertical in self?.onScrollCapture?(region, vertical) }
         v.recordsSelectionOnRelease = recordsSelectionOnRelease
-        v.selectedAudioSource = defaultAudioSource
+        v.selectedAudioConfig = defaultAudioConfig
         w.contentView = v
 
         window = w

@@ -23,6 +23,27 @@ enum RecordingAudioSource: Int, CaseIterable {
     var capturesMicrophone: Bool { self == .microphone || self == .both }
 }
 
+/// 录屏声音配置：来源 + 可选的麦克风设备。
+struct RecordingAudioConfig {
+    var source: RecordingAudioSource
+    var microphoneDeviceID: String?
+
+    static let `default` = RecordingAudioConfig(source: .system, microphoneDeviceID: nil)
+
+    var capturesSystemAudio: Bool { source.capturesSystemAudio }
+    var capturesMicrophone: Bool { source.capturesMicrophone }
+
+    /// 当前可用的麦克风输入设备列表。
+    static func microphoneDevices() -> [AVCaptureDevice] {
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.microphone],
+            mediaType: .audio,
+            position: .unspecified
+        )
+        return session.devices
+    }
+}
+
 final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
                            AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     var onFinish: ((Result<URL, Error>) -> Void)?
@@ -57,6 +78,7 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private let outputHeight: Int
     private let excludingWindowID: CGWindowID?
     private let audioSource: RecordingAudioSource
+    private let microphoneDeviceID: String?
     /// 视频帧、系统音频、麦克风全部在这个串行队列里处理，避免多队列竞态。
     private let outputQueue = DispatchQueue(label: "snapmark.video-recorder.frames")
     private let lock = NSLock()
@@ -90,10 +112,12 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
     private var microphoneFirstPTS: CMTime?
 
     init(screen: NSScreen, region: NSRect, outputURL: URL,
-         excludingWindowID: CGWindowID? = nil, audioSource: RecordingAudioSource = .none) {
+         excludingWindowID: CGWindowID? = nil, audioSource: RecordingAudioSource = .none,
+         microphoneDeviceID: String? = nil) {
         self.outputURL = outputURL
         self.excludingWindowID = excludingWindowID
         self.audioSource = audioSource
+        self.microphoneDeviceID = microphoneDeviceID
         let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         displayID = number.map { CGDirectDisplayID($0.uint32Value) } ?? 0
         let geometry = number == nil ? nil : Self.captureGeometry(
@@ -307,7 +331,11 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
 
     private func startMicrophoneCapture() {
         guard microphoneSession == nil else { return }
-        guard let device = AVCaptureDevice.default(for: .audio) else {
+        let device: AVCaptureDevice? = {
+            if let id = microphoneDeviceID, let d = AVCaptureDevice(uniqueID: id) { return d }
+            return AVCaptureDevice.default(for: .audio)
+        }()
+        guard let device else {
             FileHandle.standardError.write(Data("SnapMark: 找不到麦克风设备，本次录屏不采集麦克风。\n".utf8))
             return
         }
