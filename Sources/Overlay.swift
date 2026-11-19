@@ -857,6 +857,13 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     // MARK: 录制确认
 
+    /// 全屏录制：预置整个屏幕选区并直接显示“开始录制”确认按钮。
+    func presetRecordingSelection(_ rect: NSRect) {
+        selection = rect
+        showRecordConfirmButton()
+        refreshCursor()
+    }
+
     private func showRecordConfirmButton() {
         if recordConfirmButton == nil {
             let b = NSButton(title: "", target: self, action: #selector(recordConfirmTapped))
@@ -883,9 +890,11 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         let margin: CGFloat = 10
         var y = sel.minY - b.frame.height - margin
         if y < margin { y = sel.maxY + margin }
+        // 选区占满屏幕（如全屏录制）时，把按钮拉回屏幕内，避免跑到屏幕外。
         if y + b.frame.height > bounds.maxY - margin {
-            y = max(margin, sel.maxY + margin)
+            y = bounds.maxY - b.frame.height - margin
         }
+        if y < margin { y = margin }
         var x = sel.midX - b.frame.width / 2
         x = min(max(margin, x), bounds.maxX - b.frame.width - margin)
         b.frame.origin = NSPoint(x: x, y: y)
@@ -1400,6 +1409,7 @@ final class OverlayController {
     private let image: CGImage
     private let previousApplication: NSRunningApplication?
     private let recordsSelectionOnRelease: Bool
+    private let presetSelection: NSRect?
     private var window: OverlayWindow?
     private var view: OverlayView?
     private var scrollHintWindow: NSWindow?
@@ -1408,10 +1418,11 @@ final class OverlayController {
     var onRecordSelection: ((NSRect) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
-    init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false) {
+    init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false, presetSelection: NSRect? = nil) {
         self.screen = screen
         self.image = image
         self.recordsSelectionOnRelease = recordsSelectionOnRelease
+        self.presetSelection = presetSelection
         let current = NSRunningApplication.current.bundleIdentifier
         let front = NSWorkspace.shared.frontmostApplication
         self.previousApplication = front?.bundleIdentifier == current ? nil : front
@@ -1445,6 +1456,11 @@ final class OverlayController {
 
         window = w
         view = v
+
+        // 全屏录制：预置整个屏幕选区并直接显示确认按钮，用户点击后开始录制。
+        if recordsSelectionOnRelease, let preset = presetSelection {
+            v.presetRecordingSelection(preset)
+        }
 
         // 退到后台 App 时系统的"协作式激活"只让我们逻辑上 active，
         // 窗口服务器仍把光标算在上一个 App 名下，NSCursor.set 就不显示。

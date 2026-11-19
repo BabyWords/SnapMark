@@ -152,8 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func menuCapture() { startCapture() }
     @objc private func menuRecordFullscreen() {
-        guard let screen = ScreenCapture.screenUnderMouse() else { return }
-        startRecording(screen: screen, region: NSRect(origin: .zero, size: screen.frame.size))
+        startCapture(forRecording: true, presetFullscreen: true)
     }
     @objc private func menuRecordSelection() { startCapture(forRecording: true) }
     @objc private func menuStopRecording() { stopRecording() }
@@ -206,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: 截图流程
 
-    func startCapture(forRecording: Bool = false) {
+    func startCapture(forRecording: Bool = false, presetFullscreen: Bool = false) {
         guard controller == nil, !capturing, videoRecorder == nil, scrollCapture == nil else { return }
         guard let screen = ScreenCapture.screenUnderMouse() else { return }
 
@@ -236,7 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.captureRequestID = nil
             switch outcome {
             case .success(let image):
-                self.present(screen: screen, image: image, forRecording: forRecording)
+                self.present(screen: screen, image: image, forRecording: forRecording, presetFullscreen: presetFullscreen)
             case .noPermission:
                 self.promptForPermission()
             case .failed:
@@ -245,8 +244,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false) {
-        let c = OverlayController(screen: screen, image: image, recordsSelectionOnRelease: forRecording)
+    private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false, presetFullscreen: Bool = false) {
+        let preset: NSRect? = presetFullscreen ? NSRect(origin: .zero, size: screen.frame.size) : nil
+        let c = OverlayController(screen: screen, image: image, recordsSelectionOnRelease: forRecording, presetSelection: preset)
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
         c.onRecordSelection = { [weak self, weak c] region in
