@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -21,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var capturing = false
     private var captureRequestID: UUID?
     private var permissionTimer: Timer?
+    private var updaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -29,6 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         setupHotKey()
         setupSettings()
+
+        // Sparkle 自动更新：从 Info.plist 的 SUFeedURL 拉取更新源，定期检查。
+        // 需持有引用，否则控制器被释放后自动更新会失效。
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
 
         let args = CommandLine.arguments
         if args.contains("--demo") {

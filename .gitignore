@@ -2,3 +2,6 @@
 build/
 *.dSYM/
 *.xcuserstate
+
+# 发版产物（zip/appcast 由 release.sh 生成，上传到 GitHub Release）
+dist/

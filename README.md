@@ -35,7 +35,7 @@ SnapMark 是一款使用 Swift、AppKit、ScreenCaptureKit 和 Vision 构建的�
 
 ### 屏幕录制
 
-- 打开菜单栏 SnapMark 菜单，选择“录制当前屏幕”开始录制鼠标所在显示器，或选择“选择区域录制…”框选录制范围；框选完成后自动开始录制。
+- 打开菜单栏 SnapMark 菜单，选择“录制当前屏幕”或“选择区域录制…”。框选（或确认整个屏幕）后，会出现“开始录制”按钮，点击确认后才开始录制；`Esc` 或右键可取消。
 - 录制期间会在录制区域显示红色范围边框并压暗区域外画面，方便确认正在录制的范围；该提示层会被采集排除，不会出现在成片里。
 - 录制输出为 H.264 编码的 MP4，**不采集音频**。文件保存到当前配置的保存位置，并使用带日期时间的文件名。
 - 录制时菜单栏显示录制状态，且“录制当前屏幕 / 选择区域录制”会置灰；从菜单栏选择“停止录屏”正常结束并显示保存位置。录制过程中退出应用时会先结束录制。
@@ -67,6 +67,29 @@ open build/SnapMark.app
 
 构建脚本会优先使用本机名为 `SnapMark Signing` 的代码签名身份；若不存在则回退到 ad-hoc 签名。签名证书不包含在仓库中。首次启动时，macOS 可能会要求确认打开应用；屏幕捕获权限需由用户在系统设置中授予。在另一台 Mac 上运行时，若提示无法验证开发者，请右键点击应用并选择“打开”以首次放行。
 
+## 自动更新（Sparkle）
+
+SnapMark 已接入 [Sparkle](https://sparkle-project.org) 自动更新，更新源托管在 GitHub Releases（无需自建服务器）。应用启动后会定期检查新版本，发现更新时提示下载并自动安装。
+
+- **更新源**：`Info.plist` 的 `SUFeedURL` 指向 `https://github.com/BabyWords/SnapMark/releases/latest/download/appcast.xml`。
+- **签名校验**：更新包使用 EdDSA 密钥签名，公钥配置在 `Info.plist` 的 `SUPublicEDKey`；私钥保存在开发机的钥匙串中（由 `Vendor/tools/generate_keys` 生成）。
+- **发版**：在开发机执行一条命令即可完成构建、打包、生成更新源并上传 GitHub Release：
+
+  ```bash
+  ./release.sh 1.1.0 "本次更新的说明"
+  ```
+
+  脚本会自动把版本号写入 `Info.plist`、构建、打包 zip、用 `generate_appcast` 生成并签名 `appcast.xml`，再通过 `gh` 上传到 GitHub Release。
+
+### 其他 Mac 首次安装
+
+都是自己的机器时，无需 Developer ID 证书（$99/年）。每台 Mac 首次安装做一次放行即可，之后自动更新不再弹窗：
+
+1. 首次打开时右键 →“打开”，或在“系统设置 → 隐私与安全性”点“仍要打开”。
+2. 首次截图/录屏时，在“系统设置 → 隐私与安全性 → 屏幕录制”勾选 SnapMark 授权。
+
+> 若想让某台机器也能**打包发版**（而非仅接收更新），需把开发机的“SnapMark Signing”证书导出为 `.p12` 并导入到该机器，以保证所有机器使用同一签名身份。仅接收更新则无需这一步。
+
 ## 开发自检
 
 ```bash
@@ -81,9 +104,11 @@ open build/SnapMark.app
 ```text
 Sources/       Swift 应用源码（截图、覆盖层、标注、OCR、长截图、录屏等）
 Resources/     应用图标
-Info.plist     macOS 应用元数据与权限说明
+Vendor/        Sparkle 自动更新框架与发版工具（generate_appcast、generate_keys 等）
+Info.plist     macOS 应用元数据、权限说明与更新源配置
 build.sh       本机构建脚本
 make-dmg.sh    DMG 打包脚本
+release.sh     发版脚本（构建 + 打包 + 生成更新源 + 上传 GitHub Release）
 ```
 
 ## 隐私说明

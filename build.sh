@@ -11,6 +11,7 @@ mkdir -p "$(dirname "$EXECUTABLE")"
 printf '==> Compiling %s\n' "$APP_NAME"
 swiftc -swift-version 5 -O \
   -target arm64-apple-macos14.0 \
+  -F Vendor \
   -framework AppKit \
   -framework Carbon \
   -framework ScreenCaptureKit \
@@ -19,6 +20,8 @@ swiftc -swift-version 5 -O \
   -framework CoreVideo \
   -framework ImageIO \
   -framework Vision \
+  -framework Sparkle \
+  -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   Sources/*.swift \
   -o "$EXECUTABLE"
 
@@ -26,6 +29,12 @@ cp Info.plist "$APP/Contents/Info.plist"
 if [ -f "Resources/AppIcon.icns" ]; then
   mkdir -p "$APP/Contents/Resources"
   cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+fi
+
+# 复制 Sparkle 自动更新框架（保留符号链接）。运行时从 @rpath 加载。
+if [ -d "Vendor/Sparkle.framework" ]; then
+  mkdir -p "$APP/Contents/Frameworks"
+  ditto "Vendor/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 fi
 
 # 优先使用本地稳定的自签名证书签名。ad-hoc 签名会让 macOS 按代码哈希识别应用，

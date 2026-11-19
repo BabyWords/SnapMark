@@ -32,5 +32,11 @@
 	<string>SnapMark 需要读取屏幕画面，以截取和录制你选择的屏幕内容。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/BabyWords/SnapMark/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>1C5oH/gq2mvYlSpQI/WrdyRbAirK7Eb8XBEO+HdiS7k=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>
