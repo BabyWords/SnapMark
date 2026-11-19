@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let img = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "SnapMark")
+            let img = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: "SnapMark")
             img?.isTemplate = true
             button.image = img
             button.target = self
