@@ -1,8 +1,30 @@
 import AppKit
 import AVFoundation
+import CoreMedia
 import ScreenCaptureKit
 
-final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+/// 录屏时的声音来源。
+enum RecordingAudioSource: Int, CaseIterable {
+    case none = 0
+    case system = 1
+    case microphone = 2
+    case both = 3
+
+    var title: String {
+        switch self {
+        case .none: return "静音"
+        case .system: return "系统声音"
+        case .microphone: return "麦克风"
+        case .both: return "系统 + 麦克风"
+        }
+    }
+
+    var capturesSystemAudio: Bool { self == .system || self == .both }
+    var capturesMicrophone: Bool { self == .microphone || self == .both }
+}
+
+final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate,
+                           AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     var onFinish: ((Result<URL, Error>) -> Void)?
     var onStarted: (() -> Void)?
 
@@ -34,6 +56,8 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private let outputWidth: Int
     private let outputHeight: Int
     private let excludingWindowID: CGWindowID?
+    private let audioSource: RecordingAudioSource
+    /// 视频帧、系统音频、麦克风全部在这个串行队列里处理，避免多队列竞态。
     private let outputQueue = DispatchQueue(label: "snapmark.video-recorder.frames")
     private let lock = NSLock()
 
@@ -50,6 +74,8 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var writer: AVAssetWriter?
     private var writerInput: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
+    private var systemAudioInput: AVAssetWriterInput?
+    private var microphoneInput: AVAssetWriterInput?
     private var firstPresentationTime: CMTime?
     private var lastPresentationTime: CMTime?
     private var lastPixelBuffer: CVPixelBuffer?
@@ -59,9 +85,15 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var ownsOutputFile = false
     private var tailFrame: (CVPixelBuffer, CMTime)?
 
-    init(screen: NSScreen, region: NSRect, outputURL: URL, excludingWindowID: CGWindowID? = nil) {
+    // 麦克风采集（AVCaptureSession），只在本对象持有期间存活。
+    private var microphoneSession: AVCaptureSession?
+    private var microphoneFirstPTS: CMTime?
+
+    init(screen: NSScreen, region: NSRect, outputURL: URL,
+         excludingWindowID: CGWindowID? = nil, audioSource: RecordingAudioSource = .none) {
         self.outputURL = outputURL
         self.excludingWindowID = excludingWindowID
+        self.audioSource = audioSource
         let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         displayID = number.map { CGDirectDisplayID($0.uint32Value) } ?? 0
         let geometry = number == nil ? nil : Self.captureGeometry(
@@ -173,14 +205,22 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
             configuration.queueDepth = 8
             configuration.showsCursor = true
-            configuration.capturesAudio = false
+            configuration.capturesAudio = audioSource.capturesSystemAudio
 
             let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
+            if audioSource.capturesSystemAudio {
+                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: outputQueue)
+            }
 
             lock.withLock { self.stream = stream }
 
             try await stream.startCapture()
+
+            // 麦克风与录屏同步启动；失败只降级为无麦克风声音，不影响录屏。
+            if audioSource.capturesMicrophone {
+                startMicrophoneCapture()
+            }
 
             let shouldStop = lock.withLock {
                 captureStarted = true
@@ -225,12 +265,19 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             } catch {
                 self.recordError(error)
             }
+            self.stopMicrophone()
             // This block is ordered after all pending sample callbacks on the same serial queue.
             self.outputQueue.async { [weak self] in self?.finishAfterCaptureStopped() }
         }
     }
 
+    // MARK: 屏幕 / 系统音频采集
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
+        if outputType == .audio {
+            handleSystemAudio(sampleBuffer)
+            return
+        }
         guard outputType == .screen else { return }
         // 帧状态（.complete 表示有可用画面）存放在 sample attachments 数组里，
         // 而不是 buffer 级 attachment。用 CMGetAttachment 读不到，会把所有帧都当成
@@ -254,6 +301,99 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         if shouldStop { stopInFlight = true }
         lock.unlock()
         if shouldStop { stopCapture(stream) }
+    }
+
+    // MARK: 麦克风采集
+
+    private func startMicrophoneCapture() {
+        guard microphoneSession == nil else { return }
+        guard let device = AVCaptureDevice.default(for: .audio) else {
+            FileHandle.standardError.write(Data("SnapMark: 找不到麦克风设备，本次录屏不采集麦克风。\n".utf8))
+            return
+        }
+        do {
+            let session = AVCaptureSession()
+            let input = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(input) else { return }
+            session.addInput(input)
+
+            let output = AVCaptureAudioDataOutput()
+            // 固定输出为线性 PCM，交给 AVAssetWriter 实时编码成 AAC。
+            output.audioSettings = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false
+            ]
+            output.setSampleBufferDelegate(self, queue: outputQueue)
+            guard session.canAddOutput(output) else { return }
+            session.addOutput(output)
+
+            session.startRunning()
+            microphoneSession = session
+        } catch {
+            FileHandle.standardError.write(Data("SnapMark: 麦克风启动失败（\(error.localizedDescription)），本次录屏不采集麦克风。\n".utf8))
+        }
+    }
+
+    private func stopMicrophone() {
+        microphoneSession?.stopRunning()
+        microphoneSession = nil
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        handleMicrophoneBuffer(sampleBuffer)
+    }
+
+    private func handleMicrophoneBuffer(_ sampleBuffer: CMSampleBuffer) {
+        guard !isStopRequested else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, pts.isNumeric else { return }
+        if microphoneFirstPTS == nil { microphoneFirstPTS = pts }
+        guard let first = microphoneFirstPTS else { return }
+        let relative = CMTimeSubtract(pts, first)
+        guard CMTimeCompare(relative, .zero) >= 0 else { return }
+        guard let input = microphoneInput, input.isReadyForMoreMediaData else { return }
+        guard let retimed = Self.retimed(sampleBuffer, to: relative) else { return }
+        if !input.append(retimed) {
+            recordError(writer?.error ?? RecorderError.appendFailed)
+        }
+    }
+
+    private func handleSystemAudio(_ sampleBuffer: CMSampleBuffer) {
+        guard !isStopRequested else { return }
+        guard let firstPresentationTime else { return }   // 视频第一帧尚未到达，丢弃
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, pts.isNumeric else { return }
+        let relative = CMTimeSubtract(pts, firstPresentationTime)
+        guard CMTimeCompare(relative, .zero) >= 0 else { return }
+        guard let input = systemAudioInput, input.isReadyForMoreMediaData else { return }
+        guard let retimed = Self.retimed(sampleBuffer, to: relative) else { return }
+        if !input.append(retimed) {
+            recordError(writer?.error ?? RecorderError.appendFailed)
+        }
+    }
+
+    /// 用新的展示时间戳重建一个 sample buffer（数据不变），供 writer 按相对时间写入。
+    private static func retimed(_ sampleBuffer: CMSampleBuffer, to time: CMTime) -> CMSampleBuffer? {
+        var timing = CMSampleTimingInfo(
+            duration: CMSampleBufferGetDuration(sampleBuffer),
+            presentationTimeStamp: time,
+            decodeTimeStamp: .invalid
+        )
+        var out: CMSampleBuffer?
+        let status = CMSampleBufferCreateCopyWithNewTiming(
+            allocator: nil,
+            sampleBuffer: sampleBuffer,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleBufferOut: &out
+        )
+        guard status == noErr else { return nil }
+        return out
     }
 
     private var isStopRequested: Bool {
@@ -329,6 +469,30 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         )
         guard writer.canAdd(input) else { throw RecorderError.writerSetup }
         writer.add(input)
+
+        // 系统声音：SCK 输出的是压缩 AAC，直接 passthrough。
+        if audioSource.capturesSystemAudio {
+            let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+            audioInput.expectsMediaDataInRealTime = true
+            guard writer.canAdd(audioInput) else { throw RecorderError.writerSetup }
+            writer.add(audioInput)
+            systemAudioInput = audioInput
+        }
+
+        // 麦克风：PCM 交给 writer 实时编码成 AAC。
+        if audioSource.capturesMicrophone {
+            let micInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 128_000
+            ])
+            micInput.expectsMediaDataInRealTime = true
+            guard writer.canAdd(micInput) else { throw RecorderError.writerSetup }
+            writer.add(micInput)
+            microphoneInput = micInput
+        }
+
         guard writer.startWriting() else { throw writer.error ?? RecorderError.writerSetup }
         self.writer = writer
         writerInput = input
@@ -372,6 +536,8 @@ final class VideoRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         appendTailFrameIfNeeded()
         writerFinishing = true
         writerInput.markAsFinished()
+        systemAudioInput?.markAsFinished()
+        microphoneInput?.markAsFinished()
         writer.finishWriting { [weak self, weak writer] in
             guard let self else { return }
             if let writer, writer.status == .completed {

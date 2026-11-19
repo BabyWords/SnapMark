@@ -1,8 +1,8 @@
 # SnapMark
 
-SnapMark 是一款原生 macOS 菜单栏截图工具，基于 Swift、AppKit、ScreenCaptureKit 和 Vision 构建。它支持截图、标注、OCR 文字选择、置顶预览、四方向长截图，以及无音频 MP4 录屏。
+SnapMark 是一款原生 macOS 菜单栏截图工具，基于 Swift、AppKit、ScreenCaptureKit 和 Vision 构建。它支持截图、标注、OCR 文字选择、置顶预览、四方向长截图，以及带声音选项的 MP4 录屏。
 
-SnapMark is a native macOS menu-bar screenshot tool built with Swift, AppKit, ScreenCaptureKit, and Vision. It supports screenshots, annotation, OCR text selection, pinned previews, four-direction scrolling capture, and audio-free MP4 screen recording.
+SnapMark is a native macOS menu-bar screenshot tool built with Swift, AppKit, ScreenCaptureKit, and Vision. It supports screenshots, annotation, OCR text selection, pinned previews, four-direction scrolling capture, and MP4 screen recording with audio options.
 
 ## 功能 / Features
 
@@ -60,12 +60,12 @@ Scroll slowly and continuously, avoiding skipping large chunks of content. Blank
 
 - 打开菜单栏 SnapMark 菜单，选择“录制当前屏幕”或“选择区域录制…”。框选（或确认整个屏幕）后，会出现“开始录制”按钮，点击确认后才开始录制；`Esc` 或右键可取消。
 - 录制期间会在录制区域显示红色范围边框并压暗区域外画面，方便确认正在录制的范围；该提示层会被采集排除，不会出现在成片里。
-- 录制输出为 H.264 编码的 MP4，**不采集音频**。文件保存到当前配置的保存位置，并使用带日期时间的文件名。
+- 录制输出为 H.264 编码的 MP4。点击「开始录制」旁的下拉菜单可选择声音来源：静音、系统声音、麦克风，或系统声音 + 麦克风。文件保存到当前配置的保存位置，并使用带日期时间的文件名。
 - 录制时菜单栏显示录制状态，且“录制当前屏幕 / 选择区域录制”会置灰；从菜单栏选择“停止录屏”正常结束并显示保存位置。录制过程中退出应用时会先结束录制。
 
 - Open the menu-bar SnapMark menu and choose "Record Current Screen" or "Select Region to Record…". After selecting a region (or confirming the full screen), a "Start Recording" button appears; recording only begins after you confirm. Press `Esc` or right-click to cancel.
 - While recording, the captured region is outlined in red and the area outside is dimmed to show exactly what is being recorded; this overlay is excluded from the capture and does not appear in the output.
-- Recordings are H.264-encoded MP4 with **no audio**, saved to the configured save location with a timestamped filename.
+- Recordings are H.264-encoded MP4. Choose the audio source from the dropdown next to the "Start Recording" button: mute, system audio, microphone, or system audio + microphone. Files are saved to the configured save location with a timestamped filename.
 - The menu bar shows recording status, and the "Record Current Screen / Select Region to Record" items are greyed out during recording. Choose "Stop Recording" from the menu bar to finish. Recording is stopped automatically if the app quits.
 
 ## 系统要求 / System Requirements
@@ -88,9 +88,9 @@ SnapMark supports automatic updates: the app periodically checks for new version
 
 ## 屏幕录制权限 / Screen Recording Permission
 
-截图、长截图和录屏均需要 macOS 屏幕录制权限。首次使用时按提示前往“系统设置 → 隐私与安全性 → 屏幕录制”授权 SnapMark；也可以在菜单栏权限菜单项中打开设置。授权状态变化后，必要时按提示重新启动应用。
+截图、长截图和录屏均需要 macOS 屏幕录制权限。首次使用时按提示前往“系统设置 → 隐私与安全性 → 屏幕录制”授权 SnapMark；也可以在菜单栏权限菜单项中打开设置。授权状态变化后，必要时按提示重新启动应用。录制麦克风声音时，还需要「麦克风」权限（系统设置 → 隐私与安全性 → 麦克风）。
 
-Screenshots, scrolling capture, and recording all require the macOS Screen Recording permission. On first use, follow the prompt to "System Settings → Privacy & Security → Screen Recording" and grant access to SnapMark; you can also open the setting from the menu-bar permission item. Restart the app if prompted after the permission changes.
+Screenshots, scrolling capture, and recording all require the macOS Screen Recording permission. On first use, follow the prompt to "System Settings → Privacy & Security → Screen Recording" and grant access to SnapMark; you can also open the setting from the menu-bar permission item. Restart the app if prompted after the permission changes. Recording microphone audio also requires the Microphone permission (System Settings → Privacy & Security → Microphone).
 
 ## 签名风险 / Signing Risk
 
