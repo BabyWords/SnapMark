@@ -216,6 +216,8 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     }
     private var currentColor: NSColor = Palette.colors[0]
     private var palettePicker: PalettePickerView?
+    private var arrowStyle: ArrowStyle = .thin
+    private var arrowStylePicker: ArrowStylePickerView?
 
     private var toolbar: ToolbarView?
     private var textField: NSTextField?
@@ -335,6 +337,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
     /// 某点应有的光标（显式设置用，与 cursor rect 的规则保持一致）
     func cursor(at p: NSPoint) -> NSCursor {
         if let pv = palettePicker, pv.frame.contains(p) { return .arrow }
+        if let ap = arrowStylePicker, ap.frame.contains(p) { return .arrow }
         if let tb = toolbar, !tb.isHidden, tb.frame.contains(p) { return .arrow }
         if phase == .moving { return .closedHand }
         if textSelectionMode, selection?.contains(p) == true { return .iBeam }
@@ -488,6 +491,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         // 浮层上保持箭头，不要在按钮上出现十字
         if let tb = toolbar, !tb.isHidden { addCursorRect(tb.frame, cursor: .arrow) }
         if let pv = palettePicker { addCursorRect(pv.frame, cursor: .arrow) }
+        if let ap = arrowStylePicker { addCursorRect(ap.frame, cursor: .arrow) }
     }
 
     private func resizeHandleRects(_ sel: NSRect) -> [NSRect] {
@@ -576,8 +580,9 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         // 提交正在编辑的文字后继续处理这次点击，避免用户必须再点一次才能继续操作。
         if textField != nil { commitText() }
 
-        // 点在别处就收起色板（点在色板内部时事件不会走到这里）
+        // 点在别处就收起色板/样式浮层（点在浮层内部时事件不会走到这里）
         if palettePicker != nil { hidePalette() }
+        if arrowStylePicker != nil { hideArrowStylePicker() }
 
         let p = convert(event.locationInWindow, from: nil)
 
@@ -619,6 +624,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
             }
             var a = Annotation(kind: tool.annotationKind, start: p, color: currentColor)
             if tool == .pen { a.points = [p] }
+            if tool == .arrow { a.arrowStyle = arrowStyle }
             draft = a
             phase = .annotating
             return
@@ -794,6 +800,7 @@ final class OverlayView: NSView, NSTextFieldDelegate {
                 self.undo()
             }
             tb.onColor = { [weak self] in self?.togglePalette() }
+            tb.onArrowStyle = { [weak self] in self?.toggleArrowStylePicker() }
             tb.onCopy = { [weak self] in
                 guard let self else { return }
                 self.commitText()
@@ -892,6 +899,50 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         x = min(max(margin, x), bounds.maxX - size.width - margin)
         var y = tb.frame.minY - size.height - 8
         // 工具栏在选区上方时，色板也跟着放到工具栏上面，别压住截图内容
+        if let sel = selection, tb.frame.midY > sel.midY { y = tb.frame.maxY + 8 }
+        if y + size.height > bounds.maxY - margin { y = tb.frame.minY - size.height - 8 }
+        if y < margin { y = tb.frame.maxY + 8 }
+        pv.frame.origin = NSPoint(x: x, y: y)
+    }
+
+    // MARK: 箭头样式
+
+    private func toggleArrowStylePicker() {
+        if arrowStylePicker == nil {
+            let pv = ArrowStylePickerView(frame: NSRect(origin: .zero, size: ArrowStylePickerView.panelSize))
+            pv.current = arrowStyle
+            pv.onPick = { [weak self] style in
+                guard let self else { return }
+                self.arrowStyle = style
+                self.hideArrowStylePicker()
+                self.tool = .arrow
+                self.toolbar?.setActiveTool(.arrow)
+                self.textSelectionMode = false
+                self.refreshCursor()
+            }
+            addSubview(pv)
+            arrowStylePicker = pv
+            refreshCursor()
+            layoutArrowStylePicker()
+        } else {
+            hideArrowStylePicker()
+        }
+    }
+
+    private func hideArrowStylePicker() {
+        arrowStylePicker?.removeFromSuperview()
+        arrowStylePicker = nil
+        refreshCursor()
+    }
+
+    private func layoutArrowStylePicker() {
+        guard let pv = arrowStylePicker, let tb = toolbar else { return }
+        let size = pv.frame.size
+        let margin: CGFloat = 10
+        let anchorX = tb.frame.minX + tb.arrowButtonCenter.x
+        var x = anchorX - size.width / 2
+        x = min(max(margin, x), bounds.maxX - size.width - margin)
+        var y = tb.frame.minY - size.height - 8
         if let sel = selection, tb.frame.midY > sel.midY { y = tb.frame.maxY + 8 }
         if y + size.height > bounds.maxY - margin { y = tb.frame.minY - size.height - 8 }
         if y < margin { y = tb.frame.maxY + 8 }

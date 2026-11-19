@@ -48,6 +48,21 @@ enum Tool: Int, CaseIterable {
     }
 }
 
+/// 箭头样式：细箭头、粗箭头、渐变粗箭头（锥形，从细到粗）。
+enum ArrowStyle: Int, CaseIterable {
+    case thin
+    case thick
+    case tapered
+
+    var title: String {
+        switch self {
+        case .thin:    return "细箭头"
+        case .thick:   return "粗箭头"
+        case .tapered: return "渐变箭头"
+        }
+    }
+}
+
 enum Palette {
     static let colors: [NSColor] = [
         .systemRed, .systemOrange, .systemYellow, .systemGreen,
@@ -75,6 +90,7 @@ struct Annotation {
     var points: [CGPoint] = []
     var color: NSColor
     var lineWidth: CGFloat = 3
+    var arrowStyle: ArrowStyle = .thin
     var text: String?
     var fontSize: CGFloat = 18
 
@@ -87,6 +103,7 @@ struct Annotation {
          points: [CGPoint] = [],
          color: NSColor,
          lineWidth: CGFloat = 3,
+         arrowStyle: ArrowStyle = .thin,
          text: String? = nil,
          fontSize: CGFloat = 18) {
         self.kind = kind
@@ -95,6 +112,7 @@ struct Annotation {
         self.points = points
         self.color = color
         self.lineWidth = lineWidth
+        self.arrowStyle = arrowStyle
         self.text = text
         self.fontSize = fontSize
     }
@@ -200,20 +218,99 @@ enum Renderer {
         let dx = p1.x - p0.x, dy = p1.y - p0.y
         let len = hypot(dx, dy)
         guard len > 1.5 else { return }
-
         let angle = atan2(dy, dx)
+
+        switch a.arrowStyle {
+        case .thin:
+            drawThinArrow(p0: p0, p1: p1, angle: angle, len: len, lineWidth: a.lineWidth, in: ctx, color: color)
+        case .thick:
+            drawThickArrow(p0: p0, p1: p1, angle: angle, len: len, lineWidth: a.lineWidth, in: ctx, color: color)
+        case .tapered:
+            drawTaperedArrow(p0: p0, p1: p1, angle: angle, len: len, lineWidth: a.lineWidth, in: ctx, color: color)
+        }
+    }
+
+    /// 细箭头：固定线宽的箭杆 + 实心三角头（原样式）。
+    private static func drawThinArrow(p0: CGPoint, p1: CGPoint, angle: CGFloat, len: CGFloat,
+                                      lineWidth: CGFloat, in ctx: CGContext, color: CGColor) {
         // 箭头头部用固定尺寸（只受线宽影响），避免拖拽过程中不断变大看起来"跳动"
-        let head = min(max(a.lineWidth * 4.5, 10), len)
+        let head = min(max(lineWidth * 4.5, 10), len)
         let spread: CGFloat = .pi / 7
 
         ctx.setStrokeColor(color)
         ctx.setFillColor(color)
-        ctx.setLineWidth(a.lineWidth)
+        ctx.setLineWidth(lineWidth)
 
         // 箭杆：末端略微回缩，避免从箭头尖里戳出来
         ctx.move(to: p0)
         ctx.addLine(to: CGPoint(x: p1.x - cos(angle) * head * 0.8, y: p1.y - sin(angle) * head * 0.8))
         ctx.strokePath()
+
+        let headPath = CGMutablePath()
+        headPath.move(to: p1)
+        headPath.addLine(to: CGPoint(x: p1.x - cos(angle - spread) * head,
+                                     y: p1.y - sin(angle - spread) * head))
+        headPath.addLine(to: CGPoint(x: p1.x - cos(angle + spread) * head,
+                                     y: p1.y - sin(angle + spread) * head))
+        headPath.closeSubpath()
+        ctx.addPath(headPath)
+        ctx.fillPath()
+    }
+
+    /// 粗箭头：更粗的箭杆与更大的箭头头，强调醒目。
+    private static func drawThickArrow(p0: CGPoint, p1: CGPoint, angle: CGFloat, len: CGFloat,
+                                       lineWidth: CGFloat, in ctx: CGContext, color: CGColor) {
+        let w = lineWidth * 2.5
+        let head = min(max(w * 3.2, 14), len)
+        let spread: CGFloat = .pi / 6
+
+        ctx.setStrokeColor(color)
+        ctx.setFillColor(color)
+        ctx.setLineWidth(w)
+
+        ctx.move(to: p0)
+        ctx.addLine(to: CGPoint(x: p1.x - cos(angle) * head * 0.8, y: p1.y - sin(angle) * head * 0.8))
+        ctx.strokePath()
+
+        let headPath = CGMutablePath()
+        headPath.move(to: p1)
+        headPath.addLine(to: CGPoint(x: p1.x - cos(angle - spread) * head,
+                                     y: p1.y - sin(angle - spread) * head))
+        headPath.addLine(to: CGPoint(x: p1.x - cos(angle + spread) * head,
+                                     y: p1.y - sin(angle + spread) * head))
+        headPath.closeSubpath()
+        ctx.addPath(headPath)
+        ctx.fillPath()
+    }
+
+    /// 渐变粗箭头：锥形箭杆从细到粗渐变 + 实心三角头。
+    private static func drawTaperedArrow(p0: CGPoint, p1: CGPoint, angle: CGFloat, len: CGFloat,
+                                         lineWidth: CGFloat, in ctx: CGContext, color: CGColor) {
+        let w0 = max(lineWidth * 0.7, 1.5)   // 起点整宽（窄端）
+        let w1 = lineWidth * 2.6             // 终点整宽（粗端）
+        let head = min(max(lineWidth * 4.5, 13), len)
+        let spread: CGFloat = .pi / 6
+
+        let nx = -sin(angle)
+        let ny = cos(angle)
+        let shaftEnd = CGPoint(x: p1.x - cos(angle) * head * 0.9,
+                               y: p1.y - sin(angle) * head * 0.9)
+
+        ctx.setFillColor(color)
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(1)
+
+        // 锥形箭杆：起点两侧 half0、末端两侧 half1 组成的四边形，从细到粗渐变。
+        let half0 = w0 / 2
+        let half1 = w1 / 2
+        let shaft = CGMutablePath()
+        shaft.move(to: CGPoint(x: p0.x + nx * half0, y: p0.y + ny * half0))
+        shaft.addLine(to: CGPoint(x: shaftEnd.x + nx * half1, y: shaftEnd.y + ny * half1))
+        shaft.addLine(to: CGPoint(x: shaftEnd.x - nx * half1, y: shaftEnd.y - ny * half1))
+        shaft.addLine(to: CGPoint(x: p0.x - nx * half0, y: p0.y - ny * half0))
+        shaft.closeSubpath()
+        ctx.addPath(shaft)
+        ctx.fillPath()
 
         let headPath = CGMutablePath()
         headPath.move(to: p1)

@@ -112,12 +112,18 @@ enum DemoAssets {
     static func sampleAnnotations(in sel: NSRect) -> [Annotation] {
         var list: [Annotation] = []
 
-        // 箭头
-        var arrow = Annotation(kind: .arrow,
-                               start: CGPoint(x: sel.minX + 40, y: sel.maxY - 60),
-                               color: .systemRed)
-        arrow.end = CGPoint(x: sel.minX + 300, y: sel.minY + 70)
-        list.append(arrow)
+        // 箭头（细 / 粗 / 渐变粗三种样式，顺带冒烟验证渲染）
+        let arrowStyles: [(ArrowStyle, NSColor)] = [
+            (.thin, .systemRed), (.thick, .systemOrange), (.tapered, .systemPink)
+        ]
+        for (i, (style, color)) in arrowStyles.enumerated() {
+            var arrow = Annotation(kind: .arrow,
+                                   start: CGPoint(x: sel.minX + 40 + CGFloat(i) * 120, y: sel.maxY - 60),
+                                   color: color,
+                                   arrowStyle: style)
+            arrow.end = CGPoint(x: sel.minX + 300 + CGFloat(i) * 120, y: sel.minY + 70)
+            list.append(arrow)
+        }
 
         // 矩形
         var rect = Annotation(kind: .rect,

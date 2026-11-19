@@ -30,6 +30,7 @@ final class ToolbarView: NSView {
     var onTool: ((Tool) -> Void)?
     var onUndo: (() -> Void)?
     var onColor: (() -> Void)?
+    var onArrowStyle: (() -> Void)?
     var onCopy: (() -> Void)?
     var onSave: ((NSView) -> Void)?
     var onPin: (() -> Void)?
@@ -184,6 +185,13 @@ final class ToolbarView: NSView {
         return NSPoint(x: r.midX, y: r.midY)
     }
 
+    /// 箭头按钮中心（相对工具栏坐标），用来给箭头样式选择浮层定位
+    var arrowButtonCenter: NSPoint {
+        guard let b = toolButtons[.arrow] else { return .zero }
+        let r = b.convert(b.bounds, to: self)
+        return NSPoint(x: r.midX, y: r.midY)
+    }
+
     func setColorButtonActive(_ active: Bool) {
         colorButton.isActive = active
     }
@@ -217,6 +225,11 @@ final class ToolbarView: NSView {
 
     @objc private func toolTapped(_ sender: NSButton) {
         guard let tool = Tool(rawValue: sender.tag) else { return }
+        if tool == .arrow {
+            // 箭头先弹样式选择，选完样式再进入箭头工具
+            onArrowStyle?()
+            return
+        }
         setActiveTool(tool)
         onTool?(tool)
     }

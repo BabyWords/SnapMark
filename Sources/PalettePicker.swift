@@ -217,3 +217,87 @@ final class PalettePickerView: NSView {
         onPick?(color)
     }
 }
+
+// MARK: - 箭头样式选择器
+
+/// 箭头样式选择浮层：横向列出几种箭头样式（细/粗/渐变粗），点击选择。
+/// 与色板一样自绘成子视图，避免 NSPopover 被 .screenSaver 层的覆盖窗口盖住。
+final class ArrowStylePickerView: NSView {
+
+    var onPick: ((ArrowStyle) -> Void)?
+
+    var current: ArrowStyle = .thin {
+        didSet { needsDisplay = true }
+    }
+
+    private static let cardW: CGFloat = 64
+    private static let cardH: CGFloat = 40
+    private static let gap: CGFloat = 6
+    private static let pad: CGFloat = 8
+
+    static var panelSize: NSSize {
+        let count = CGFloat(ArrowStyle.allCases.count)
+        let w = pad * 2 + count * cardW + (count - 1) * gap
+        let h = pad * 2 + cardH
+        return NSSize(width: w, height: h)
+    }
+
+    override var isOpaque: Bool { false }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func cardRect(_ index: Int) -> NSRect {
+        NSRect(x: Self.pad + CGFloat(index) * (Self.cardW + Self.gap),
+               y: Self.pad,
+               width: Self.cardW, height: Self.cardH)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+
+        // 面板背景
+        let bg = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
+        NSColor(calibratedWhite: 0.14, alpha: 0.98).setFill()
+        bg.fill()
+        NSColor(white: 1, alpha: 0.14).setStroke()
+        bg.lineWidth = 1
+        bg.stroke()
+
+        for (i, style) in ArrowStyle.allCases.enumerated() {
+            let rect = cardRect(i)
+
+            // 卡片背景：选中用强调色，否则用深灰
+            let card = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
+            if style == current {
+                NSColor.controlAccentColor.withAlphaComponent(0.95).setFill()
+            } else {
+                NSColor(calibratedWhite: 0.24, alpha: 1).setFill()
+            }
+            card.fill()
+
+            // 箭头预览（白色，复用真实渲染逻辑，保证所见即所得）
+            ctx.saveGState()
+            ctx.clip(to: rect.insetBy(dx: 2, dy: 2))
+            let a = Annotation(kind: .arrow,
+                               start: CGPoint(x: rect.minX + 12, y: rect.midY),
+                               end: CGPoint(x: rect.maxX - 12, y: rect.midY),
+                               color: .white, lineWidth: 2.5, arrowStyle: style)
+            Renderer.draw([a], in: ctx, imageScale: 1, base: nil)
+            ctx.restoreGState()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        for (i, style) in ArrowStyle.allCases.enumerated() where cardRect(i).contains(p) {
+            current = style
+            onPick?(style)
+            return
+        }
+    }
+}
