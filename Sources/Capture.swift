@@ -39,28 +39,17 @@ enum ScreenCapture {
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return nil }
 
-        // 1) 优先用 CoreGraphics 的全局鼠标位置 + CGDisplayBounds（同为“主屏左上角原点、y 向下”），
-        //    最底层、最实时，避免 AppKit 坐标在多屏排列下可能的不一致。
-        if let cgMouse = CGEvent(source: nil)?.location {
-            for screen in screens {
-                if let id = displayID(of: screen), CGDisplayBounds(id).contains(cgMouse) {
-                    return screen
-                }
-            }
-        }
-
-        // 2) 兜底：用 AppKit 坐标（NSEvent.mouseLocation + NSScreen.frame，同为“主屏左下角原点、y 向上”）
-        let nsMouse = NSEvent.mouseLocation
-        if let hit = screens.first(where: { $0.frame.contains(nsMouse) }) {
+        let p = NSEvent.mouseLocation
+        if let hit = screens.first(where: { $0.frame.contains(p) }) {
             return hit
         }
 
-        // 3) 都没命中（鼠标在屏幕间隙 / 显示器热插拔）时，取中心距鼠标最近的屏幕
+        // 兜底：鼠标落在屏幕间隙 / 显示器热插拔时，取中心距鼠标最近的屏幕
         var best: NSScreen?
         var bestDist = CGFloat.greatestFiniteMagnitude
         for s in screens {
-            let dx = nsMouse.x - s.frame.midX
-            let dy = nsMouse.y - s.frame.midY
+            let dx = p.x - s.frame.midX
+            let dy = p.y - s.frame.midY
             let d = dx * dx + dy * dy
             if d < bestDist { bestDist = d; best = s }
         }
