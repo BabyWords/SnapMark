@@ -718,6 +718,22 @@ if cliArgs.contains("--cursor-probe") {
     app.run()
 }
 
+if cliArgs.contains("--screen-probe") {
+    // 诊断多屏：打印每块屏幕的 frame / CGDisplayBounds，以及鼠标在两种坐标系下的位置，
+    // 用于排查“截图不跟随鼠标到副屏”的问题。需在有多显示器的机器上运行。
+    let screens = NSScreen.screens
+    print("屏幕数: \(screens.count)")
+    for (i, s) in screens.enumerated() {
+        let id = ScreenCapture.displayID(of: s).map { String($0) } ?? "-"
+        let cg = ScreenCapture.displayID(of: s).map { "\(CGDisplayBounds($0))" } ?? "-"
+        print("屏\(i): id=\(id) NS.frame=\(s.frame) CG.bounds=\(cg) scale=\(s.backingScaleFactor) main=\(s == NSScreen.main)")
+    }
+    print("NS 鼠标位置(NSEvent): \(NSEvent.mouseLocation)")
+    print("CG 鼠标位置(CGEvent): \(CGEvent(source: nil)?.location ?? .zero)")
+    print("screenUnderMouse 结果: \(ScreenCapture.screenUnderMouse()?.frame ?? .zero)")
+    exit(0)
+}
+
 let application = NSApplication.shared
 let appDelegate = AppDelegate()
 application.delegate = appDelegate
