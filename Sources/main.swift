@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitAfterRecording = false
     private var recordHintWindow: NSWindow?
     private var controller: OverlayController?
+    /// 多屏截图：每块屏一个独立遮罩窗口，鼠标移到哪块屏就在哪块屏框选。
+    private var overlays: [OverlayController] = []
     private var pinnedWindows: [PinnedImageController] = []
     private var scrollCapture: ScrollCaptureController?
     private var capturing = false
@@ -267,21 +269,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 普通截图：抓取所有屏幕并合成一张覆盖全部显示器的大图，
-    /// 让遮罩层跟随鼠标跨屏——鼠标移到哪块屏就在哪块屏框选。
+    /// 普通截图：逐屏抓取，每块屏一个独立遮罩窗口。
+    /// 鼠标移到哪块屏，就在哪块屏框选（各窗口独立响应各自屏幕内的鼠标事件）。
     private func startMultiScreenCapture() {
         let requestID = beginCaptureWatchdog()
-        ScreenCapture.captureAllScreens { [weak self] bbox, image in
+        ScreenCapture.captureEachScreen { [weak self] items in
             guard let self, self.captureRequestID == requestID else { return }
             self.capturing = false
             self.captureRequestID = nil
-            guard let image else {
-                // 一块屏都没截到（显示器列表异常等），回退到鼠标所在屏的单屏截图
+            if items.isEmpty {
+                // 一块屏都没截到，回退到鼠标所在屏的单屏截图
                 self.startSingleScreenCapture(presetFullscreen: false)
                 return
             }
-            self.present(frame: bbox, screen: nil, image: image, forRecording: false, presetFullscreen: false)
+            self.presentMultiScreen(items)
         }
+    }
+
+    private func presentMultiScreen(_ items: [(screen: NSScreen, image: CGImage)]) {
+        var controllers: [OverlayController] = []
+        for (screen, image) in items {
+            let c = OverlayController(screen: screen, image: image)
+            c.onClose = { [weak self] in self?.closeAllOverlays() }
+            c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
+            c.onScrollCapture = { [weak self, weak c] region, vertical in
+                guard let self, let c else { return }
+                // 单屏遮罩：region 就是该屏幕本地坐标，直接开始长截图
+                self.startScrollCapture(screen: screen, region: region, vertical: vertical, overlay: c)
+            }
+            controllers.append(c)
+        }
+        overlays = controllers
+        for c in controllers { c.begin() }
+    }
+
+    private func closeAllOverlays() {
+        let all = overlays
+        overlays = []
+        for c in all { c.close() }
     }
 
     /// 抓取期间看门狗：ScreenCaptureKit 在权限状态变化、显示器休眠或热插拔时可能迟迟不回调。
