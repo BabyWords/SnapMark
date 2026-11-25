@@ -162,18 +162,25 @@ enum ScreenCapture {
 
                 var capturedCount = 0
                 for t in targets {
-                    guard let display = displays.first(where: { $0.displayID == t.id }) else { continue }
-                    let cfg = SCStreamConfiguration()
-                    cfg.showsCursor = false
-                    cfg.captureResolution = .best
-                    // SCDisplay.width/height 返回的是点数，这里显式按像素尺寸设置，确保拿全分辨率
-                    let wantW = Int((t.frame.width * t.scale).rounded())
-                    let wantH = Int((t.frame.height * t.scale).rounded())
-                    cfg.width = max(display.width, wantW)
-                    cfg.height = max(display.height, wantH)
-                    let filter = SCContentFilter(display: display, excludingWindows: [])
-                    guard let img = try? await SCScreenshotManager.captureImage(contentFilter: filter,
-                                                                                configuration: cfg) else { continue }
+                    var img: CGImage? = nil
+                    if let display = displays.first(where: { $0.displayID == t.id }) {
+                        let cfg = SCStreamConfiguration()
+                        cfg.showsCursor = false
+                        cfg.captureResolution = .best
+                        // SCDisplay.width/height 返回的是点数，这里显式按像素尺寸设置，确保拿全分辨率
+                        let wantW = Int((t.frame.width * t.scale).rounded())
+                        let wantH = Int((t.frame.height * t.scale).rounded())
+                        cfg.width = max(display.width, wantW)
+                        cfg.height = max(display.height, wantH)
+                        let filter = SCContentFilter(display: display, excludingWindows: [])
+                        img = try? await SCScreenshotManager.captureImage(contentFilter: filter,
+                                                                          configuration: cfg)
+                    }
+                    // 兜底：SCShareableContent 的 displayID 与 NSScreenNumber 不一致、或
+                    // SCScreenshotManager 截图失败时，退回 CGDisplayCreateImage。
+                    // 真实显示器上有屏幕录制权限即可截到内容（无头/虚拟环境除外）。
+                    if img == nil { img = CGDisplayCreateImage(t.id) }
+                    guard let img else { continue }
                     capturedCount += 1
                     let dx = (t.frame.minX - bbox.minX) * unified
                     let dy = (t.frame.minY - bbox.minY) * unified

@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Carbon.HIToolbox
+import ScreenCaptureKit
 import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -770,35 +771,45 @@ if cliArgs.contains("--screen-probe") {
 }
 
 if cliArgs.contains("--capture-all-probe") {
-    // 诊断多屏合成截图：打印每块屏 CGDisplayCreateImage 的实际像素尺寸，
-    // 以及 captureAllScreens 合成出的 bbox 与合成图尺寸，并把合成图存到 /tmp。
+    // 诊断多屏合成截图：打印 NSScreenNumber 与 SCShareableContent.displayID 是否一致、
+    // 每块屏 CGDisplayCreateImage / SCScreenshotManager 的截图结果，以及最终合成图尺寸。
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
         print("hasPermission=\(ScreenCapture.hasPermission())")
+        print("NSScreen.screens 数量: \(NSScreen.screens.count)")
         for (i, s) in NSScreen.screens.enumerated() {
             let id = ScreenCapture.displayID(of: s)
-            let img = id.flatMap { CGDisplayCreateImage($0) }
-            let dim = img.map { "\($0.width)x\($0.height)" } ?? "nil"
-            print("屏\(i): frame=\(s.frame) scale=\(s.backingScaleFactor) CGDisplayCreateImage=\(dim) NSScreenNumber=\(id.map { String($0) } ?? "-")")
-            if let img, let d = OverlayView.encode(img, type: "public.png" as CFString, properties: nil),
+            let cg = id.flatMap { CGDisplayCreateImage($0) }
+            let dim = cg.map { "\($0.width)x\($0.height)" } ?? "nil"
+            print("屏\(i): NSScreenNumber=\(id.map { String($0) } ?? "-") frame=\(s.frame) scale=\(s.backingScaleFactor) CGDisplayCreateImage=\(dim)")
+            if let cg, let d = OverlayView.encode(cg, type: "public.png" as CFString, properties: nil),
                let url = URL(string: "file:///tmp/snapmark-cgdisplay-\(i).png") {
                 try? d.write(to: url)
                 print("  原始 CG 截图已存 /tmp/snapmark-cgdisplay-\(i).png")
             }
         }
-        ScreenCapture.captureAllScreens { bbox, image in
-            if let image {
-                print("captureAllScreens bbox=\(bbox) image=\(image.width)x\(image.height) imageScale≈\(CGFloat(image.width) / max(1, bbox.width))")
-                if let d = OverlayView.encode(image, type: "public.png" as CFString, properties: nil),
-                   let url = URL(string: "file:///tmp/snapmark-capture-all.png") {
-                    try? d.write(to: url)
-                    print("saved /tmp/snapmark-capture-all.png")
-                }
+        Task {
+            if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+                let ids = content.displays.map { "\($0.displayID)(\($0.width)x\($0.height))" }
+                print("SCShareableContent.displays 数量: \(content.displays.count)")
+                print("SCShareableContent.displayID 列表: \(ids)")
             } else {
-                print("captureAllScreens 失败：无图（可能无屏幕录制权限）")
+                print("SCShareableContent.displays 获取失败")
             }
-            exit(0)
+            ScreenCapture.captureAllScreens { bbox, image in
+                if let image {
+                    print("captureAllScreens 成功 bbox=\(bbox) image=\(image.width)x\(image.height) scale≈\(CGFloat(image.width) / max(1, bbox.width))")
+                    if let d = OverlayView.encode(image, type: "public.png" as CFString, properties: nil),
+                       let url = URL(string: "file:///tmp/snapmark-capture-all.png") {
+                        try? d.write(to: url)
+                        print("saved /tmp/snapmark-capture-all.png")
+                    }
+                } else {
+                    print("captureAllScreens 失败：无图（可能无屏幕录制权限，或所有屏都截不到）")
+                }
+                exit(0)
+            }
         }
     }
     app.run()
