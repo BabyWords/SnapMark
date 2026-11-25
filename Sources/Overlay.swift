@@ -1534,7 +1534,7 @@ private final class ScrollSelectionHintView: NSView {
 
 final class OverlayController {
 
-    private let screen: NSScreen
+    private let contentFrame: NSRect
     private let image: CGImage
     private let previousApplication: NSRunningApplication?
     private let recordsSelectionOnRelease: Bool
@@ -1548,9 +1548,15 @@ final class OverlayController {
     var onRecordSelection: ((NSRect, RecordingAudioConfig) -> Void)?
     var onScrollCapture: ((NSRect, Bool) -> Void)?
 
-    init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false,
+    convenience init(screen: NSScreen, image: CGImage, recordsSelectionOnRelease: Bool = false,
+                     presetSelection: NSRect? = nil, audioConfig: RecordingAudioConfig = .default) {
+        self.init(frame: screen.frame, image: image, recordsSelectionOnRelease: recordsSelectionOnRelease,
+                  presetSelection: presetSelection, audioConfig: audioConfig)
+    }
+
+    init(frame: NSRect, image: CGImage, recordsSelectionOnRelease: Bool = false,
          presetSelection: NSRect? = nil, audioConfig: RecordingAudioConfig = .default) {
-        self.screen = screen
+        self.contentFrame = frame
         self.image = image
         self.recordsSelectionOnRelease = recordsSelectionOnRelease
         self.presetSelection = presetSelection
@@ -1562,22 +1568,22 @@ final class OverlayController {
 
     /// 抓到的像素宽 / 屏幕点宽，取整避免 1.9995 这类比例造成缩放发虚
     var imageScale: CGFloat {
-        let raw = CGFloat(image.width) / max(1, screen.frame.width)
+        let raw = CGFloat(image.width) / max(1, contentFrame.width)
         let rounded = raw.rounded()
         return abs(raw - rounded) < 0.02 ? rounded : raw
     }
 
     func begin() {
-        let w = OverlayWindow(contentRect: screen.frame, styleMask: [.borderless],
+        let w = OverlayWindow(contentRect: contentFrame, styleMask: [.borderless],
                               backing: .buffered, defer: false)
         w.isOpaque = false
         w.backgroundColor = .clear
         w.hasShadow = false
         w.level = .screenSaver
         w.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        w.setFrame(screen.frame, display: true)
+        w.setFrame(contentFrame, display: true)
 
-        let v = OverlayView(frame: NSRect(origin: .zero, size: screen.frame.size),
+        let v = OverlayView(frame: NSRect(origin: .zero, size: contentFrame.size),
                             baseImage: image, imageScale: imageScale)
         v.onFinish = { [weak self] in self?.close() }
         v.onPinImage = { [weak self] image, size in self?.onPinImage?(image, size) }
@@ -1623,11 +1629,12 @@ final class OverlayController {
         view?.togglePaletteForTest()
     }
 
-    func hideForScrollCapture(selection: NSRect) {
+    func hideForScrollCapture(selection: NSRect, in frame: NSRect? = nil) {
         guard scrollHintWindow == nil else { return }
         window?.orderOut(nil)
+        let target = frame ?? contentFrame
 
-        let hint = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
+        let hint = NSWindow(contentRect: target, styleMask: [.borderless],
                             backing: .buffered, defer: false)
         hint.isOpaque = false
         hint.backgroundColor = .clear
@@ -1636,7 +1643,7 @@ final class OverlayController {
         hint.ignoresMouseEvents = true
         hint.acceptsMouseMovedEvents = false
         hint.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        hint.contentView = ScrollSelectionHintView(frame: NSRect(origin: .zero, size: screen.frame.size),
+        hint.contentView = ScrollSelectionHintView(frame: NSRect(origin: .zero, size: target.size),
                                                    selection: selection)
         scrollHintWindow = hint
         hint.orderFrontRegardless()

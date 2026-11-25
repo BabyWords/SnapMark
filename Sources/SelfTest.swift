@@ -307,6 +307,53 @@ enum SelfTest {
         return context.makeImage()
     }
 
+    /// 验证多屏合成 + 裁剪的坐标链路（不依赖真实屏幕，用假色块模拟双屏并排）。
+    /// 合成摆放逻辑与 `ScreenCapture.captureAllScreens` 一致：bbox 为各屏 frame 并集、
+    /// 原点对齐 bbox 左下角、统一 scale；再用 `Compositor.render` 裁剪副屏区域，
+    /// 期望裁出副屏（蓝色）而非主屏（红色）。
+    private static func verifyMultiScreenComposite() -> Bool {
+        let unified: CGFloat = 2
+        let screenA = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let screenB = NSRect(x: 800, y: 0, width: 800, height: 600)
+        let bbox = screenA.union(screenB)
+        let pxW = Int(bbox.width * unified)
+        let pxH = Int(bbox.height * unified)
+        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: pxW, height: pxH, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        let red = CGColor(red: 1, green: 0, blue: 0, alpha: 1)
+        let blue = CGColor(red: 0, green: 0, blue: 1, alpha: 1)
+        for (frame, color) in [(screenA, red), (screenB, blue)] {
+            let dx = (frame.minX - bbox.minX) * unified
+            let dy = (frame.minY - bbox.minY) * unified
+            ctx.setFillColor(color)
+            ctx.fill(CGRect(x: dx, y: dy, width: frame.width * unified, height: frame.height * unified))
+        }
+        guard let base = ctx.makeImage() else { return false }
+
+        // 用户在副屏(屏B)内框选，region 为 bbox 本地坐标
+        let region = NSRect(x: 900, y: 100, width: 400, height: 300)
+        guard let cropped = Compositor.render(base: base, selection: region, imageScale: unified,
+                                              annotations: []) else { return false }
+        guard cropped.width == 800, cropped.height == 600 else { return false }
+        guard let (r, g, b) = centerPixel(cropped) else { return false }
+        // 期望裁到副屏（蓝主导），而非主屏（红 r=255）或黑/白。给色彩管理留少量余量。
+        return r < 60 && g < 120 && b > 200
+    }
+
+    private static func centerPixel(_ img: CGImage) -> (r: Int, g: Int, b: Int)? {
+        let w = img.width, h = img.height
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)))
+        let idx = ((h / 2) * w + (w / 2)) * 4
+        return (Int(data[idx]), Int(data[idx + 1]), Int(data[idx + 2]))
+    }
+
     static func run() {
         let pixelSize = NSSize(width: 1600, height: 1000)
         let scale: CGFloat = 2
@@ -335,7 +382,8 @@ enum SelfTest {
             print("SELFTEST-FAIL: write")
             return
         }
-        guard verifyScrollMatching(), verifyTextScrollMatching(), verifyVideoGeometry() else { return }
-        print("SELFTEST-OK \(path) \(out.width)x\(out.height); scroll directions: 4/4; video geometry: 2/2")
+        guard verifyScrollMatching(), verifyTextScrollMatching(), verifyVideoGeometry(),
+              verifyMultiScreenComposite() else { return }
+        print("SELFTEST-OK \(path) \(out.width)x\(out.height); scroll directions: 4/4; video geometry: 2/2; multi-screen composite: ok")
     }
 }

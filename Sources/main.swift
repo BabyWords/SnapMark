@@ -231,7 +231,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func startCapture(forRecording: Bool = false, presetFullscreen: Bool = false) {
         guard controller == nil, !capturing, videoRecorder == nil, scrollCapture == nil else { return }
-        guard let screen = ScreenCapture.screenUnderMouse() else { return }
 
         // 没权限时直接走授权流程。不要"先抓一次再说"：
         // 未授权时 SCShareableContent 会一直等系统的授权框，画面就卡住了。
@@ -240,26 +239,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        capturing = true
-        let requestID = UUID()
-        captureRequestID = requestID
-
-        // ScreenCaptureKit 在权限状态变化、显示器休眠或热插拔时可能迟迟不回调。
-        // 看门狗保证一次异常请求不会永久吞掉后续快捷键。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-            guard let self, self.captureRequestID == requestID, self.capturing else { return }
-            self.capturing = false
-            self.captureRequestID = nil
-            self.showAlert("截图超时", "没有及时拿到屏幕画面，请检查屏幕录制权限后再试。")
+        if forRecording {
+            startSingleScreenCapture(presetFullscreen: presetFullscreen)
+        } else {
+            startMultiScreenCapture()
         }
+    }
 
+    /// 录屏（区域/全屏）：仍只覆盖鼠标所在的那块屏幕，录屏本质是单屏内框选。
+    private func startSingleScreenCapture(presetFullscreen: Bool) {
+        guard let screen = ScreenCapture.screenUnderMouse() else { return }
+        let requestID = beginCaptureWatchdog()
         ScreenCapture.capture(screen: screen) { [weak self] outcome in
             guard let self, self.captureRequestID == requestID else { return }
             self.capturing = false
             self.captureRequestID = nil
             switch outcome {
             case .success(let image):
-                self.present(screen: screen, image: image, forRecording: forRecording, presetFullscreen: presetFullscreen)
+                self.present(frame: screen.frame, screen: screen, image: image,
+                             forRecording: true, presetFullscreen: presetFullscreen)
             case .noPermission:
                 self.promptForPermission()
             case .failed:
@@ -268,14 +266,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func present(screen: NSScreen, image: CGImage, forRecording: Bool = false, presetFullscreen: Bool = false) {
-        let preset: NSRect? = presetFullscreen ? NSRect(origin: .zero, size: screen.frame.size) : nil
-        let c = OverlayController(screen: screen, image: image, recordsSelectionOnRelease: forRecording,
+    /// 普通截图：抓取所有屏幕并合成一张覆盖全部显示器的大图，
+    /// 让遮罩层跟随鼠标跨屏——鼠标移到哪块屏就在哪块屏框选。
+    private func startMultiScreenCapture() {
+        let requestID = beginCaptureWatchdog()
+        ScreenCapture.captureAllScreens { [weak self] bbox, image in
+            guard let self, self.captureRequestID == requestID else { return }
+            self.capturing = false
+            self.captureRequestID = nil
+            guard let image else {
+                // 一块屏都没截到（显示器列表异常等），回退到鼠标所在屏的单屏截图
+                self.startSingleScreenCapture(presetFullscreen: false)
+                return
+            }
+            self.present(frame: bbox, screen: nil, image: image, forRecording: false, presetFullscreen: false)
+        }
+    }
+
+    /// 抓取期间看门狗：ScreenCaptureKit 在权限状态变化、显示器休眠或热插拔时可能迟迟不回调。
+    private func beginCaptureWatchdog() -> UUID {
+        capturing = true
+        let requestID = UUID()
+        captureRequestID = requestID
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, self.captureRequestID == requestID, self.capturing else { return }
+            self.capturing = false
+            self.captureRequestID = nil
+            self.showAlert("截图超时", "没有及时拿到屏幕画面，请检查屏幕录制权限后再试。")
+        }
+        return requestID
+    }
+
+    private func present(frame: NSRect, screen: NSScreen?, image: CGImage,
+                         forRecording: Bool, presetFullscreen: Bool) {
+        let preset: NSRect? = presetFullscreen ? NSRect(origin: .zero, size: frame.size) : nil
+        let c = OverlayController(frame: frame, image: image, recordsSelectionOnRelease: forRecording,
                                   presetSelection: preset, audioConfig: currentAudioConfig())
         c.onClose = { [weak self] in self?.controller = nil }
         c.onPinImage = { [weak self] image, size in self?.pinImage(image, size: size) }
         c.onRecordSelection = { [weak self, weak c] region, config in
-            guard let self, let c, self.videoRecorder == nil, self.scrollCapture == nil else { return }
+            guard let self, let c, let screen, self.videoRecorder == nil, self.scrollCapture == nil else { return }
             Self.saveAudioConfig(config)
             c.close()
             self.controller = nil
@@ -283,7 +313,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         c.onScrollCapture = { [weak self, weak c] region, vertical in
             guard let self, let c else { return }
-            self.startScrollCapture(screen: screen, region: region, vertical: vertical, overlay: c)
+            // region 是遮罩层本地坐标（普通截图为多屏并集的 bbox），换算到其中心所在屏幕的本地坐标
+            let globalCenter = NSPoint(x: frame.minX + region.midX, y: frame.minY + region.midY)
+            guard let target = ScreenCapture.screen(containingGlobalPoint: globalCenter) ?? NSScreen.main else { return }
+            let local = region.offsetBy(dx: frame.minX - target.frame.minX,
+                                        dy: frame.minY - target.frame.minY)
+            self.startScrollCapture(screen: target, region: local, vertical: vertical, overlay: c)
         }
         controller = c
         c.begin()
@@ -297,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startScrollCapture(screen: NSScreen, region: NSRect, vertical: Bool, overlay: OverlayController) {
         guard scrollCapture == nil else { return }
-        overlay.hideForScrollCapture(selection: region)
+        overlay.hideForScrollCapture(selection: region, in: screen.frame)
         let capture = ScrollCaptureController(screen: screen, region: region,
                                               axis: vertical ? .vertical : .horizontal,
                                               excludingWindowID: overlay.scrollHintWindowID)
@@ -732,6 +767,41 @@ if cliArgs.contains("--screen-probe") {
     print("CG 鼠标位置(CGEvent): \(CGEvent(source: nil)?.location ?? .zero)")
     print("screenUnderMouse 结果: \(ScreenCapture.screenUnderMouse()?.frame ?? .zero)")
     exit(0)
+}
+
+if cliArgs.contains("--capture-all-probe") {
+    // 诊断多屏合成截图：打印每块屏 CGDisplayCreateImage 的实际像素尺寸，
+    // 以及 captureAllScreens 合成出的 bbox 与合成图尺寸，并把合成图存到 /tmp。
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        print("hasPermission=\(ScreenCapture.hasPermission())")
+        for (i, s) in NSScreen.screens.enumerated() {
+            let id = ScreenCapture.displayID(of: s)
+            let img = id.flatMap { CGDisplayCreateImage($0) }
+            let dim = img.map { "\($0.width)x\($0.height)" } ?? "nil"
+            print("屏\(i): frame=\(s.frame) scale=\(s.backingScaleFactor) CGDisplayCreateImage=\(dim) NSScreenNumber=\(id.map { String($0) } ?? "-")")
+            if let img, let d = OverlayView.encode(img, type: "public.png" as CFString, properties: nil),
+               let url = URL(string: "file:///tmp/snapmark-cgdisplay-\(i).png") {
+                try? d.write(to: url)
+                print("  原始 CG 截图已存 /tmp/snapmark-cgdisplay-\(i).png")
+            }
+        }
+        ScreenCapture.captureAllScreens { bbox, image in
+            if let image {
+                print("captureAllScreens bbox=\(bbox) image=\(image.width)x\(image.height) imageScale≈\(CGFloat(image.width) / max(1, bbox.width))")
+                if let d = OverlayView.encode(image, type: "public.png" as CFString, properties: nil),
+                   let url = URL(string: "file:///tmp/snapmark-capture-all.png") {
+                    try? d.write(to: url)
+                    print("saved /tmp/snapmark-capture-all.png")
+                }
+            } else {
+                print("captureAllScreens 失败：无图（可能无屏幕录制权限）")
+            }
+            exit(0)
+        }
+    }
+    app.run()
 }
 
 let application = NSApplication.shared

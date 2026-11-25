@@ -56,6 +56,11 @@ enum ScreenCapture {
         return best ?? NSScreen.main
     }
 
+    /// 命中全局坐标点（AppKit 坐标，主屏左下角原点）所在的屏幕。
+    static func screen(containingGlobalPoint p: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { $0.frame.contains(p) }
+    }
+
     // MARK: 截图
 
     /// 抓取整块屏幕，回调在主线程。
@@ -112,6 +117,83 @@ enum ScreenCapture {
         } else {
             completion(legacyCapture(displayID: id))
         }
+    }
+
+    /// 抓取所有屏幕，并合成一张覆盖全部显示器的位图。
+    /// 返回的 bbox 是所有 `NSScreen.frame` 的并集（AppKit 全局坐标，主屏左下角原点、y 向上）；
+    /// 合成图原点对齐 bbox 左下角，屏幕之间的间隙填充黑色。
+    /// 统一使用最大的 backingScaleFactor 作为 imageScale，保证高分辨率屏不被降采样。
+    /// 注意：不能走 `CGDisplayCreateImage`——它在授权后仍可能返回全黑图，只有 ScreenCaptureKit 能真正截到内容。
+    static func captureAllScreens(completion: @escaping (NSRect, CGImage?) -> Void) {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { completion(.zero, nil); return }
+
+        // 主线程提取每块屏的 frame / displayID / scale，异步任务只携带值类型，
+        // 避免在后台读取 NSScreen 对象触发竞态。
+        let targets: [(frame: NSRect, id: CGDirectDisplayID, scale: CGFloat)] = screens.compactMap { s in
+            guard let id = displayID(of: s) else { return nil }
+            return (s.frame, id, s.backingScaleFactor)
+        }
+        guard !targets.isEmpty else { completion(.zero, nil); return }
+
+        Task {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                let displays = content.displays
+
+                var bbox = targets[0].frame
+                for t in targets { bbox = bbox.union(t.frame) }
+
+                let unified = max(1, targets.map { $0.scale }.max() ?? 1)
+                let pxW = max(1, Int((bbox.width * unified).rounded()))
+                let pxH = max(1, Int((bbox.height * unified).rounded()))
+                guard let cs = CGColorSpace(name: CGColorSpace.sRGB),
+                      let ctx = CGContext(data: nil, width: pxW, height: pxH, bitsPerComponent: 8,
+                                          bytesPerRow: 0, space: cs,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                    await finishAll(.zero, nil, completion)
+                    return
+                }
+
+                // 间隙区域填黑（这些区域不会被正常框选到）
+                ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+                ctx.fill(CGRect(x: 0, y: 0, width: CGFloat(pxW), height: CGFloat(pxH)))
+                ctx.interpolationQuality = .high
+
+                var capturedCount = 0
+                for t in targets {
+                    guard let display = displays.first(where: { $0.displayID == t.id }) else { continue }
+                    let cfg = SCStreamConfiguration()
+                    cfg.showsCursor = false
+                    cfg.captureResolution = .best
+                    // SCDisplay.width/height 返回的是点数，这里显式按像素尺寸设置，确保拿全分辨率
+                    let wantW = Int((t.frame.width * t.scale).rounded())
+                    let wantH = Int((t.frame.height * t.scale).rounded())
+                    cfg.width = max(display.width, wantW)
+                    cfg.height = max(display.height, wantH)
+                    let filter = SCContentFilter(display: display, excludingWindows: [])
+                    guard let img = try? await SCScreenshotManager.captureImage(contentFilter: filter,
+                                                                                configuration: cfg) else { continue }
+                    capturedCount += 1
+                    let dx = (t.frame.minX - bbox.minX) * unified
+                    let dy = (t.frame.minY - bbox.minY) * unified
+                    let w = t.frame.width * unified
+                    let h = t.frame.height * unified
+                    ctx.draw(img, in: CGRect(x: dx, y: dy, width: w, height: h))
+                }
+
+                // 一块屏都没截到（显示器列表异常等），返回 nil 让上层回退到单屏截图
+                let combined = capturedCount > 0 ? ctx.makeImage() : nil
+                await finishAll(bbox, combined, completion)
+            } catch {
+                await finishAll(.zero, nil, completion)
+            }
+        }
+    }
+
+    private static func finishAll(_ bbox: NSRect, _ image: CGImage?,
+                                  _ completion: @escaping (NSRect, CGImage?) -> Void) async {
+        await MainActor.run { completion(bbox, image) }
     }
 
     /// 权限被拒绝时 ScreenCaptureKit 抛 -3801（userDeclined）
