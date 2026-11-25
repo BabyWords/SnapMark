@@ -308,24 +308,24 @@ final class OverlayView: NSView, NSTextFieldDelegate {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
 
-        // 压暗层：整屏一次，之后不参与重绘
-        dimView.frame = bounds
-        dimView.autoresizingMask = [.width, .height]
-        dimView.wantsLayer = true
-        dimView.layer?.backgroundColor = NSColor(white: 0, alpha: 0.34).cgColor
-        addSubview(dimView)
-
-        // 底图：用 mask 裁出选区，拖动时只改 path，不重绘图像
+        // 冻结层：截图瞬间抓到的静态画面，不透明地盖住真实屏幕。
+        // 遮罩一出现，下面的动画/视频就"定格"，框选时看到的内容不再继续动。
         contentView.frame = bounds
         contentView.autoresizingMask = [.width, .height]
         contentView.wantsLayer = true
         contentView.layer?.contents = baseImage
         contentView.layer?.contentsGravity = .resize
-        maskLayer.fillColor = NSColor.black.cgColor
-        maskLayer.fillRule = .nonZero
-        maskLayer.frame = bounds
-        contentView.layer?.mask = maskLayer
         addSubview(contentView)
+
+        // 压暗层：半透明黑，压在冻结层之上；用 mask 挖掉选区，选区透出清晰冻结画面。
+        dimView.frame = bounds
+        dimView.autoresizingMask = [.width, .height]
+        dimView.wantsLayer = true
+        dimView.layer?.backgroundColor = NSColor(white: 0, alpha: 0.34).cgColor
+        maskLayer.fillColor = NSColor.black.cgColor
+        maskLayer.frame = bounds
+        dimView.layer?.mask = maskLayer
+        addSubview(dimView)
 
         canvas.frame = bounds
         canvas.autoresizingMask = [.width, .height]
@@ -336,8 +336,14 @@ final class OverlayView: NSView, NSTextFieldDelegate {
 
     private func updateMask() {
         if let sel = selection, sel.width > 0, sel.height > 0 {
-            maskLayer.path = CGPath(rect: sel, transform: nil)
+            // 压暗层挖洞：外框 + 选区孔，evenOdd 让选区透明、其余区域压暗。
+            let path = CGMutablePath()
+            path.addRect(bounds)
+            path.addRect(sel)
+            maskLayer.path = path
+            maskLayer.fillRule = .evenOdd
         } else {
+            // 无选区：整屏压暗（mask 置空）
             maskLayer.path = nil
         }
     }
